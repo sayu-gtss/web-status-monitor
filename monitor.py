@@ -185,10 +185,10 @@ def run_checks(logger):
                     last_alert_subject = f"[HIGH ALERT] 🚨 Website Down - {url}"
                 down_since_str = prev_down_since or current_time.strftime("%Y-%m-%d %H:%M:%S")
                 
-                # Trigger phone call only if we transitioned from a working state or startup
-                if prev_status in ["200 OK", "SLOW", "UNKNOWN"]:
-                    print(f"[Monitor] {url} transitioned to down state from a working/unknown state. Triggering voice call...")
-                    make_voice_call(url, current_status)
+                # Trigger phone call on ANY status change to a non-200 state
+                # (e.g. 200→404, 404→500, SLOW→500, UNKNOWN→404 all trigger a call)
+                print(f"[Monitor] {url} changed to a non-200 state ({current_status}). Triggering voice call...")
+                make_voice_call(url, current_status)
         else:
             print(f"[Monitor] {url} remains {current_status}. No alert email sent.")
             down_since_str = prev_down_since
