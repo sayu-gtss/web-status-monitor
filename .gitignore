@@ -11,6 +11,8 @@ credentials.json.json
 storage/monitor_state.json
 storage/monitor_log.csv
 storage/monitor_log_*.csv
+storage/latency_history.json
+storage/*.pid
 
 # ======================
 # Python

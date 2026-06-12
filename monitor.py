@@ -16,6 +16,7 @@ from storage.sheet_logger import SheetLogger
 load_dotenv()
 
 STATE_FILE = "storage/monitor_state.json"
+LATENCY_FILE = "storage/latency_history.json"
 
 def load_state():
     """Load the last known status of monitored websites from a JSON file."""
@@ -35,6 +36,34 @@ def save_state(state):
     except Exception as e:
         print(f"[Monitor] Error saving state file: {e}")
 
+def log_latency(url, latency_ms, status_desc):
+    """Log check response time to a rolling window of 50 logs per URL."""
+    history = {}
+    if os.path.exists(LATENCY_FILE):
+        try:
+            with open(LATENCY_FILE, 'r', encoding='utf-8') as f:
+                history = json.load(f)
+        except Exception:
+            pass
+
+    if url not in history:
+        history[url] = []
+
+    history[url].append({
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "latency_ms": latency_ms,
+        "status": status_desc
+    })
+
+    # Keep only the last 10000 entries
+    history[url] = history[url][-10000:]
+
+    try:
+        with open(LATENCY_FILE, 'w', encoding='utf-8') as f:
+            json.dump(history, f, indent=2)
+    except Exception as e:
+        print(f"[Monitor] Error saving latency history: {e}")
+
 def check_website(url, timeout):
     """
     Checks the status of a website.
@@ -45,8 +74,8 @@ def check_website(url, timeout):
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
     try:
-        # We perform a GET request with redirect following
-        response = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
+        # We perform a GET request with redirect following (timeout is disabled as requested)
+        response = requests.get(url, headers=headers, timeout=None, allow_redirects=True)
         status_code = response.status_code
         latency_ms = response.elapsed.total_seconds() * 1000
         
@@ -204,6 +233,9 @@ def run_checks(logger):
             
         # Log to Sheets/CSV
         logger.log(url, status_code, status_desc, latency_ms, speed_rating, notification_sent)
+        
+        # Log to local rolling history file for dashboard charts
+        log_latency(url, latency_ms, status_desc)
         
     save_state(state)
     print(f"--- Finished Status Check ---")
