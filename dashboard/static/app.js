@@ -31,11 +31,12 @@ const el = (tag, cls, html) => {
 // ---------------------------------------------------------------------------
 // Navigation
 // ---------------------------------------------------------------------------
-const VIEWS = ['overview', 'urls', 'analytics', 'settings'];
+const VIEWS = ['overview', 'urls', 'analytics', 'db-logs', 'settings'];
 const VIEW_TITLES = {
   overview: 'Overview',
   urls: 'Monitor URLs',
   analytics: 'Analytics',
+  'db-logs': 'Database Logs',
   settings: 'Settings',
 };
 
@@ -55,6 +56,7 @@ function navigateTo(view) {
   if (view === 'overview') loadStatus();
   if (view === 'urls') loadUrls();
   if (view === 'analytics') loadAnalytics();
+  if (view === 'db-logs') loadDbLogs();
   if (view === 'settings') loadConfig();
 }
 
@@ -66,7 +68,7 @@ document.querySelectorAll('.nav-btn').forEach((btn) => {
 // Status helpers
 // ---------------------------------------------------------------------------
 function classifyStatus(status) {
-  if (!status || status === 'UNKNOWN') return 'unknown';
+  if (!status || status === 'UNKNOWN' || status === 'Checking...' || status.includes('Pending')) return 'unknown';
   if (status === '200 OK' || status === 'UP') return 'up';
   if (status === 'SLOW') return 'slow';
   return 'down';
@@ -332,7 +334,7 @@ const CONFIG_FIELDS = {
   heartbeat: ['CHECK_INTERVAL_SECONDS', 'CHECK_INTERVAL_MINUTES', 'REQUEST_TIMEOUT_SECONDS', 'SLOW_THRESHOLD_SECONDS'],
   email:     ['SMTP_SERVER', 'SMTP_PORT', 'SMTP_USERNAME', 'SMTP_PASSWORD', 'NOTIFICATION_RECEIVER'],
   voice:     ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_FROM_NUMBER', 'TWILIO_TO_NUMBER', 'TWILIO_PLAY_URL'],
-  google:    ['GOOGLE_SHEET_ID', 'GOOGLE_CREDS_FILE'],
+  storage:   ['SQLITE_DB_PATH', 'GOOGLE_SHEET_ID', 'GOOGLE_CREDS_FILE'],
 };
 
 async function loadConfig() {
@@ -353,6 +355,31 @@ function populateConfig() {
       input.value = configData[key];
     }
   });
+}
+
+function enableEditConfig(section) {
+  const fields = CONFIG_FIELDS[section] || [];
+  fields.forEach((key) => {
+    const input = $(`cfg-${key}`);
+    if (input) input.disabled = false;
+  });
+  const editBtn = $(`edit-${section}`);
+  const actions = $(`actions-${section}`);
+  if (editBtn) editBtn.style.display = 'none';
+  if (actions) actions.style.display = 'flex';
+}
+
+function cancelEditConfig(section) {
+  populateConfig();
+  const fields = CONFIG_FIELDS[section] || [];
+  fields.forEach((key) => {
+    const input = $(`cfg-${key}`);
+    if (input) input.disabled = true;
+  });
+  const editBtn = $(`edit-${section}`);
+  const actions = $(`actions-${section}`);
+  if (editBtn) editBtn.style.display = '';
+  if (actions) actions.style.display = 'none';
 }
 
 async function saveConfig(section) {
@@ -381,6 +408,16 @@ async function saveConfig(section) {
     if (!res.ok) { showToast(data.error || 'Save failed', 'error'); return; }
     showToast('Settings saved successfully', 'success');
     Object.assign(configData, updates);
+
+    // Lock fields after successful save
+    fields.forEach((key) => {
+      const input = $(`cfg-${key}`);
+      if (input) input.disabled = true;
+    });
+    const editBtn = $(`edit-${section}`);
+    const actions = $(`actions-${section}`);
+    if (editBtn) editBtn.style.display = '';
+    if (actions) actions.style.display = 'none';
   } catch (err) {
     showToast('Network error saving settings', 'error');
     console.error(err);
@@ -389,7 +426,9 @@ async function saveConfig(section) {
   }
 }
 
-// Make saveConfig accessible from HTML onclick
+// Make functions accessible from HTML onclick
+window.enableEditConfig = enableEditConfig;
+window.cancelEditConfig = cancelEditConfig;
 window.saveConfig = saveConfig;
 
 // ---------------------------------------------------------------------------
@@ -405,6 +444,7 @@ document.querySelectorAll('.tab-btn').forEach((btn) => {
     document.querySelectorAll('.tab-panel').forEach((panel) => {
       panel.style.display = panel.id === `tab-${tab}` ? '' : 'none';
     });
+    if (tab === 'users') loadUsers();
   });
 });
 
@@ -537,13 +577,46 @@ $('refreshBtn').addEventListener('click', async () => {
 // ---------------------------------------------------------------------------
 // Auto-refresh
 // ---------------------------------------------------------------------------
+let autoRefreshSec = 15;
+let countdownSec = 15;
+let countdownTimer = null;
+
 function startAutoRefresh() {
-  clearInterval(refreshTimer);
-  refreshTimer = setInterval(() => {
-    // Only auto-refresh status on overview
-    const overviewActive = $('nav-overview')?.classList.contains('active');
-    if (overviewActive) loadStatus();
-  }, REFRESH_INTERVAL_MS);
+  if (countdownTimer) clearInterval(countdownTimer);
+  countdownSec = autoRefreshSec;
+  updateRefreshUI();
+
+  if (autoRefreshSec <= 0) return;
+
+  countdownTimer = setInterval(() => {
+    countdownSec--;
+    if (countdownSec <= 0) {
+      countdownSec = autoRefreshSec;
+      triggerAutoRefresh();
+    }
+    updateRefreshUI();
+  }, 1000);
+}
+
+function triggerAutoRefresh() {
+  const overviewActive = $('nav-overview')?.classList.contains('active');
+  const analyticsActive = $('nav-analytics')?.classList.contains('active');
+
+  if (overviewActive) {
+    loadStatus();
+  } else if (analyticsActive) {
+    loadAnalytics();
+  }
+}
+
+function updateRefreshUI() {
+  const label = $('refreshLabel');
+  if (!label) return;
+  if (autoRefreshSec <= 0) {
+    label.textContent = 'Auto-refresh: Off';
+  } else {
+    label.textContent = `Auto-refresh: ${autoRefreshSec}s (${countdownSec}s)`;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -708,10 +781,18 @@ function renderCharts(data) {
 
     const ctx = canvas.getContext('2d');
 
-    // Create gradient
+    // Dynamic point and line segment status coloring (Green for OK, Red for Down/Timeout)
+    const statuses = history.map(h => String(h.status || h.status_desc || (h.status_code === 200 ? '200 OK' : 'Error')));
+    const pointColors = statuses.map(st => {
+      if (st.includes('200') || st === 'UP' || st.includes('OK')) {
+        return '#10b981'; // Emerald Green for OK
+      }
+      return '#ef4444'; // Bright Red for Down / Timeout / Error
+    });
+
     const gradient = ctx.createLinearGradient(0, 0, 0, 240);
-    gradient.addColorStop(0, 'rgba(99, 102, 241, 0.35)');
-    gradient.addColorStop(1, 'rgba(99, 102, 241, 0.0)');
+    gradient.addColorStop(0, 'rgba(16, 185, 129, 0.25)');
+    gradient.addColorStop(1, 'rgba(16, 185, 129, 0.0)');
 
     chartInstances[url] = new Chart(ctx, {
       type: 'line',
@@ -720,13 +801,25 @@ function renderCharts(data) {
         datasets: [{
           label: 'Response Time (ms)',
           data: chartData,
-          borderColor: '#6366f1',
+          borderColor: '#10b981',
+          segment: {
+            borderColor: ctx => {
+              const idx = ctx.p1DataIndex;
+              const st = statuses[idx] || '';
+              return (st.includes('200') || st === 'UP' || st.includes('OK')) ? '#10b981' : '#ef4444';
+            },
+            backgroundColor: ctx => {
+              const idx = ctx.p1DataIndex;
+              const st = statuses[idx] || '';
+              return (st.includes('200') || st === 'UP' || st.includes('OK')) ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.25)';
+            }
+          },
           borderWidth: 2,
-          pointBackgroundColor: '#6366f1',
-          pointBorderColor: '#0d1427',
+          pointBackgroundColor: pointColors,
+          pointBorderColor: pointColors,
           pointBorderWidth: 1.5,
-          pointRadius: 3,
-          pointHoverRadius: 5,
+          pointRadius: 3.5,
+          pointHoverRadius: 6,
           fill: true,
           backgroundColor: gradient,
           tension: 0.35
@@ -873,6 +966,9 @@ async function toggleDaemon() {
 // Init
 // ---------------------------------------------------------------------------
 function init() {
+  // Check session authentication
+  checkAuthStatus();
+
   // Default view
   navigateTo('overview');
   startAutoRefresh();
@@ -886,6 +982,502 @@ function init() {
   $('timeRangePreset')?.addEventListener('change', filterAndRenderCharts);
   $('customTimeValue')?.addEventListener('input', filterAndRenderCharts);
   $('customTimeUnit')?.addEventListener('change', filterAndRenderCharts);
+
+  // Database logs filters
+  $('dbLogDomainFilter')?.addEventListener('change', applyDbLogFilters);
+  $('dbLogStatusFilter')?.addEventListener('change', applyDbLogFilters);
+  $('dbLogSearchInput')?.addEventListener('input', applyDbLogFilters);
+  $('dbLogTimeFilter')?.addEventListener('change', applyDbLogFilters);
+
+  // Auto-refresh selector
+  const refreshSelect = $('autoRefreshSelect');
+  if (refreshSelect) {
+    refreshSelect.addEventListener('change', (e) => {
+      autoRefreshSec = parseInt(e.target.value, 10);
+      startAutoRefresh();
+    });
+  }
 }
+
+// ---------------------------------------------------------------------------
+// Database Logs View
+// ---------------------------------------------------------------------------
+let rawDbLogs = [];
+let filteredDbLogs = [];
+let currentLogsPage = 1;
+const LOGS_PER_PAGE = 25;
+
+async function loadDbLogs() {
+  try {
+    const res = await fetch('/api/db-logs?limit=2000');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to fetch logs');
+    rawDbLogs = data.logs || [];
+    populateDbLogDomainFilter();
+    applyDbLogFilters();
+  } catch (err) {
+    console.error('Error loading DB logs:', err);
+    const tbody = $('dbLogsTableBody');
+    if (tbody) {
+      tbody.innerHTML = `<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--color-down);">❌ Error loading database logs: ${err.message}</td></tr>`;
+    }
+  }
+}
+
+function populateDbLogDomainFilter() {
+  const domainSelect = $('dbLogDomainFilter');
+  if (!domainSelect) return;
+  const currentVal = domainSelect.value;
+  const domains = Array.from(new Set(rawDbLogs.map(l => l.domain).filter(Boolean))).sort();
+  
+  domainSelect.innerHTML = '<option value="all">All Domains</option>';
+  domains.forEach(domain => {
+    const opt = document.createElement('option');
+    opt.value = domain;
+    opt.textContent = domain;
+    domainSelect.appendChild(opt);
+  });
+  if (domains.includes(currentVal)) {
+    domainSelect.value = currentVal;
+  }
+}
+
+function applyDbLogFilters() {
+  const domainFilter = $('dbLogDomainFilter')?.value || 'all';
+  const statusFilter = $('dbLogStatusFilter')?.value || 'all';
+  const searchFilter = ($('dbLogSearchInput')?.value || '').toLowerCase().trim();
+  const timeFilter = $('dbLogTimeFilter')?.value || '24h';
+
+  const now = Date.now();
+  let timeCutoff = 0;
+  if (timeFilter === '1h') timeCutoff = now - 3600 * 1000;
+  else if (timeFilter === '8h') timeCutoff = now - 8 * 3600 * 1000;
+  else if (timeFilter === '24h') timeCutoff = now - 24 * 3600 * 1000;
+  else if (timeFilter === '7d') timeCutoff = now - 7 * 24 * 3600 * 1000;
+
+  filteredDbLogs = rawDbLogs.filter(item => {
+    // Time filter
+    if (timeCutoff > 0) {
+      const itemTime = new Date(item.timestamp).getTime();
+      if (!isNaN(itemTime) && itemTime < timeCutoff) return false;
+    }
+    // Domain filter
+    if (domainFilter !== 'all' && item.domain !== domainFilter) return false;
+    // Status filter
+    if (statusFilter === '200' && item.status_code !== 200) return false;
+    if (statusFilter === 'error' && (item.status_code === 200 || item.status_desc === 'Timeout' || item.status_desc === 'SLOW')) return false;
+    if (statusFilter === 'timeout' && item.status_desc !== 'Timeout') return false;
+    if (statusFilter === 'slow' && item.speed_rating !== 'SLOW' && item.status_desc !== 'SLOW') return false;
+    // Search text filter
+    if (searchFilter) {
+      const matchUrl = (item.website_url || '').toLowerCase().includes(searchFilter);
+      const matchStatus = (item.status_desc || '').toLowerCase().includes(searchFilter);
+      const matchDomain = (item.domain || '').toLowerCase().includes(searchFilter);
+      if (!matchUrl && !matchStatus && !matchDomain) return false;
+    }
+    return true;
+  });
+
+  currentLogsPage = 1;
+  renderDbLogsTable();
+}
+
+function renderDbLogsTable() {
+  const tbody = $('dbLogsTableBody');
+  const countInfo = $('dbLogsCountInfo');
+  const pageIndicator = $('dbLogsPageIndicator');
+  const prevBtn = $('btnPrevLogsPage');
+  const nextBtn = $('btnNextLogsPage');
+
+  if (!tbody) return;
+
+  const total = filteredDbLogs.length;
+  if (total === 0) {
+    tbody.innerHTML = `<tr><td colspan="8" style="padding:32px;text-align:center;color:var(--text-secondary);">No matching database logs found.</td></tr>`;
+    if (countInfo) countInfo.textContent = 'Showing 0 of 0 logs';
+    if (pageIndicator) pageIndicator.textContent = 'Page 1 of 1';
+    if (prevBtn) prevBtn.disabled = true;
+    if (nextBtn) nextBtn.disabled = true;
+    return;
+  }
+
+  const totalPages = Math.ceil(total / LOGS_PER_PAGE);
+  if (currentLogsPage > totalPages) currentLogsPage = totalPages;
+  if (currentLogsPage < 1) currentLogsPage = 1;
+
+  const startIdx = (currentLogsPage - 1) * LOGS_PER_PAGE;
+  const pageItems = filteredDbLogs.slice(startIdx, startIdx + LOGS_PER_PAGE);
+
+  tbody.innerHTML = pageItems.map(item => {
+    let statusBadgeClass = 'pill--up';
+    let statusLabel = item.status_desc || (item.status_code ? `${item.status_code}` : 'OK');
+    if (item.status_code !== 200 || item.status_desc === 'Timeout') {
+      statusBadgeClass = 'pill--down';
+    } else if (item.speed_rating === 'SLOW' || item.status_desc === 'SLOW') {
+      statusBadgeClass = 'pill--unknown';
+    }
+
+    const latencyStr = item.response_time_ms != null ? `${parseFloat(item.response_time_ms).toFixed(1)} ms` : '—';
+    const alertSentBadge = item.notification_sent 
+      ? `<span class="status-pill pill--down" style="padding:2px 8px;font-size:0.7rem;">Yes</span>` 
+      : `<span style="color:var(--text-secondary);font-size:0.75rem;">No</span>`;
+
+    return `<tr style="border-bottom:1px solid var(--border);transition:background 0.15s ease;">
+      <td style="padding:10px 16px;color:var(--text-secondary);font-weight:500;">#${item.id}</td>
+      <td style="padding:10px 16px;white-space:nowrap;font-size:0.8rem;color:var(--text-secondary);">${item.timestamp}</td>
+      <td style="padding:10px 16px;font-weight:600;color:var(--text-main);max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${item.website_url}">${item.website_url}</td>
+      <td style="padding:10px 16px;color:var(--text-secondary);">${item.domain}</td>
+      <td style="padding:10px 16px;">
+        <span class="status-pill ${statusBadgeClass}" style="padding:3px 10px;font-size:0.75rem;display:inline-flex;align-items:center;gap:4px;">
+          ${statusLabel}
+        </span>
+      </td>
+      <td style="padding:10px 16px;font-weight:500;color:var(--text-main);">${latencyStr}</td>
+      <td style="padding:10px 16px;font-size:0.75rem;color:var(--text-secondary);">${item.speed_rating || '—'}</td>
+      <td style="padding:10px 16px;">${alertSentBadge}</td>
+    </tr>`;
+  }).join('');
+
+  if (countInfo) countInfo.textContent = `Showing ${startIdx + 1}–${Math.min(startIdx + LOGS_PER_PAGE, total)} of ${total} logs`;
+  if (pageIndicator) pageIndicator.textContent = `Page ${currentLogsPage} of ${totalPages}`;
+  if (prevBtn) prevBtn.disabled = currentLogsPage <= 1;
+  if (nextBtn) nextBtn.disabled = currentLogsPage >= totalPages;
+}
+
+function changeLogsPage(delta) {
+  currentLogsPage += delta;
+  renderDbLogsTable();
+}
+
+function exportLogs(format) {
+  if (filteredDbLogs.length === 0) {
+    showToast('No logs available to export', 'warning');
+    return;
+  }
+
+  const dateStr = new Date().toISOString().slice(0, 10);
+  if (format === 'json') {
+    const jsonStr = JSON.stringify(filteredDbLogs, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `monitor_logs_${dateStr}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Exported logs as JSON', 'success');
+  } else {
+    // CSV export
+    const headers = ['ID', 'Timestamp', 'Website URL', 'Domain', 'Status Code', 'Status Description', 'Response Time (ms)', 'Speed Rating', 'Notification Sent'];
+    const rows = filteredDbLogs.map(item => [
+      item.id,
+      `"${item.timestamp}"`,
+      `"${item.website_url}"`,
+      `"${item.domain}"`,
+      item.status_code,
+      `"${item.status_desc}"`,
+      item.response_time_ms != null ? item.response_time_ms : '',
+      `"${item.speed_rating || ''}"`,
+      item.notification_sent ? 'Yes' : 'No'
+    ]);
+    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `monitor_logs_${dateStr}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Exported logs as CSV', 'success');
+  }
+}
+
+// Make accessible to HTML onclick
+window.changeLogsPage = changeLogsPage;
+window.exportLogs = exportLogs;
+window.loadDbLogs = loadDbLogs;
+
+// ---------------------------------------------------------------------------
+// Authentication & User Management Logic
+// ---------------------------------------------------------------------------
+let currentUser = null;
+
+async function checkAuthStatus() {
+  try {
+    const res = await fetch('/api/auth/me');
+    const data = await res.json();
+    if (res.ok && data.authenticated && data.user) {
+      currentUser = data.user;
+      showAppScreen(currentUser);
+      return true;
+    } else {
+      showLoginScreen();
+      return false;
+    }
+  } catch (err) {
+    console.error('Auth check error:', err);
+    showLoginScreen();
+    return false;
+  }
+}
+
+function resetSettingsTabs() {
+  document.querySelectorAll('.tab-btn').forEach((b) => {
+    const isHeartbeat = b.dataset.tab === 'heartbeat';
+    b.classList.toggle('active', isHeartbeat);
+    b.setAttribute('aria-selected', isHeartbeat ? 'true' : 'false');
+  });
+  document.querySelectorAll('.tab-panel').forEach((panel) => {
+    panel.style.display = panel.id === 'tab-heartbeat' ? '' : 'none';
+  });
+}
+
+function showLoginScreen() {
+  const overlay = $('loginOverlay');
+  if (overlay) overlay.style.display = 'flex';
+  const sidebarGroup = $('sidebarUserGroup');
+  if (sidebarGroup) sidebarGroup.style.display = 'none';
+  resetSettingsTabs();
+}
+
+function showAppScreen(user) {
+  const overlay = $('loginOverlay');
+  if (overlay) overlay.style.display = 'none';
+
+  const sidebarGroup = $('sidebarUserGroup');
+  const nameLabel = $('userNameLabel');
+  const userTabBtn = $('tab-btn-users');
+
+  if (sidebarGroup) sidebarGroup.style.display = 'flex';
+  if (nameLabel) nameLabel.textContent = `${user.username} (${user.role})`;
+
+  if (userTabBtn) {
+    userTabBtn.style.display = user.role === 'superadmin' ? '' : 'none';
+  }
+
+  // Always reset navigation to Overview page on login
+  navigateTo('overview');
+  resetSettingsTabs();
+}
+
+// ---------------------------------------------------------------------------
+// Change Password Modal Handlers
+// ---------------------------------------------------------------------------
+
+function openChangePasswordModal() {
+  const modal = $('changePwdModal');
+  const alertBox = $('changePwdAlert');
+  if (alertBox) alertBox.style.display = 'none';
+  if ($('currPasswordInput')) $('currPasswordInput').value = '';
+  if ($('newPwdInput')) $('newPwdInput').value = '';
+  if ($('confirmPwdInput')) $('confirmPwdInput').value = '';
+  if (modal) modal.style.display = 'flex';
+}
+
+function closeChangePasswordModal() {
+  const modal = $('changePwdModal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function submitChangePassword() {
+  const currPwd = $('currPasswordInput')?.value.trim();
+  const newPwd = $('newPwdInput')?.value.trim();
+  const confirmPwd = $('confirmPwdInput')?.value.trim();
+  const alertBox = $('changePwdAlert');
+  const btn = $('changePwdSubmitBtn');
+
+  if (!currPwd || !newPwd || !confirmPwd) {
+    showModalAlert('Please fill in all password fields.', false);
+    return;
+  }
+  if (newPwd !== confirmPwd) {
+    showModalAlert('New passwords do not match.', false);
+    return;
+  }
+  if (newPwd.length < 4) {
+    showModalAlert('Password must be at least 4 characters long.', false);
+    return;
+  }
+
+  if (btn) btn.disabled = true;
+
+  try {
+    const res = await fetch('/api/auth/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ current_password: currPwd, new_password: newPwd })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to change password');
+
+    showToast('Password changed successfully!', 'success');
+    closeChangePasswordModal();
+  } catch (err) {
+    showModalAlert(err.message, false);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function showModalAlert(msg, isSuccess) {
+  const alertBox = $('changePwdAlert');
+  if (!alertBox) return;
+  alertBox.textContent = msg;
+  alertBox.style.display = 'block';
+  alertBox.style.background = isSuccess ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)';
+  alertBox.style.border = isSuccess ? '1px solid rgba(16,185,129,0.3)' : '1px solid rgba(239,68,68,0.3)';
+  alertBox.style.color = isSuccess ? '#10b981' : '#ef4444';
+}
+
+window.openChangePasswordModal = openChangePasswordModal;
+window.closeChangePasswordModal = closeChangePasswordModal;
+window.submitChangePassword = submitChangePassword;
+
+async function handleLogin() {
+  const uInput = $('loginUsername');
+  const pInput = $('loginPassword');
+  const errBox = $('loginErrorAlert');
+  const btn = $('loginSubmitBtn');
+
+  if (!uInput || !pInput) return;
+  const username = uInput.value.trim();
+  const password = pInput.value.trim();
+
+  if (!username || !password) {
+    if (errBox) {
+      errBox.textContent = 'Please enter both username and password.';
+      errBox.style.display = 'block';
+    }
+    return;
+  }
+
+  if (btn) btn.disabled = true;
+  if (errBox) errBox.style.display = 'none';
+
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Login failed');
+
+    currentUser = data.user;
+    showAppScreen(currentUser);
+    showToast(`Welcome back, ${currentUser.username}!`, 'success');
+    loadStatus();
+  } catch (err) {
+    if (errBox) {
+      errBox.textContent = err.message || 'Invalid username or password.';
+      errBox.style.display = 'block';
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function handleLogout() {
+  try {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    currentUser = null;
+    showToast('Logged out successfully', 'info');
+    showLoginScreen();
+  } catch (err) {
+    console.error('Logout error:', err);
+    showLoginScreen();
+  }
+}
+
+// User Management (Superadmin)
+async function loadUsers() {
+  if (!currentUser || currentUser.role !== 'superadmin') return;
+  try {
+    const res = await fetch('/api/users');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to load users');
+    renderUsersTable(data.users || []);
+  } catch (err) {
+    console.error('Error loading users:', err);
+  }
+}
+
+function renderUsersTable(users) {
+  const tbody = $('usersTableBody');
+  if (!tbody) return;
+
+  if (users.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="5" style="padding:16px;text-align:center;color:var(--text-secondary);">No user accounts found.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = users.map(u => {
+    const isSuper = u.username === 'superadmin';
+    const deleteBtn = isSuper 
+      ? `<span style="color:var(--text-secondary);font-size:0.75rem;">Protected</span>`
+      : `<button class="btn btn-ghost btn-sm" onclick="deleteUserAccount('${u.username}')" style="color:var(--danger,#ef4444);padding:4px 8px;font-size:0.75rem;">Delete</button>`;
+
+    return `<tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:10px 14px;color:var(--text-secondary);">#${u.id}</td>
+      <td style="padding:10px 14px;font-weight:600;color:var(--text-main);">${u.username}</td>
+      <td style="padding:10px 14px;"><span class="status-pill ${u.role === 'superadmin' ? 'pill--up' : 'pill--unknown'}" style="padding:2px 8px;font-size:0.72rem;">${u.role}</span></td>
+      <td style="padding:10px 14px;color:var(--text-secondary);font-size:0.8rem;">${u.created_at}</td>
+      <td style="padding:10px 14px;text-align:right;">${deleteBtn}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function createNewUserAccount() {
+  const uInput = $('newUsernameInput');
+  const pInput = $('newPasswordInput');
+  const rSelect = $('newRoleSelect');
+
+  if (!uInput || !pInput) return;
+  const username = uInput.value.trim();
+  const password = pInput.value.trim();
+  const role = rSelect ? rSelect.value : 'admin';
+
+  if (!username || !password) {
+    showToast('Username and password are required', 'warning');
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, role })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to create user');
+
+    showToast(`User '${username}' created successfully!`, 'success');
+    uInput.value = '';
+    pInput.value = '';
+    loadUsers();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function deleteUserAccount(username) {
+  if (!confirm(`Are you sure you want to delete user account '${username}'?`)) return;
+
+  try {
+    const res = await fetch(`/api/users/${username}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to delete user');
+
+    showToast(`User '${username}' deleted`, 'info');
+    loadUsers();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+window.handleLogin = handleLogin;
+window.handleLogout = handleLogout;
+window.createNewUserAccount = createNewUserAccount;
+window.deleteUserAccount = deleteUserAccount;
 
 document.addEventListener('DOMContentLoaded', init);

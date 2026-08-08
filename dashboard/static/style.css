@@ -553,6 +553,11 @@ a { color: inherit; }
 .input-group .form-input { flex: 1; }
 .input-hint { font-size: 0.75rem; color: var(--text-muted); }
 
+/* ── Database Logs Table ─────────────────────────────────────────────── */
+.db-logs-table tbody tr:hover {
+  background: var(--bg-card-hover) !important;
+}
+
 /* ── Cards (generic) ────────────────────────────────────────────────────── */
 .card {
   background: var(--bg-card);

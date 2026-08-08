@@ -18,19 +18,48 @@
   <div class="bg-orb bg-orb--1" aria-hidden="true"></div>
   <div class="bg-orb bg-orb--2" aria-hidden="true"></div>
 
+  <!-- ── Login Screen Overlay ───────────────────────────────────────────── -->
+  <div id="loginOverlay" style="display:none;position:fixed;inset:0;z-index:99999;background:var(--bg-main,#090d16);display:flex;align-items:center;justify-content:center;padding:20px;">
+    <div class="card" style="width:100%;max-width:400px;padding:32px;border:1px solid var(--border);box-shadow:0 20px 40px rgba(0,0,0,0.5);border-radius:16px;background:var(--bg-card,#0f172a);">
+      <div style="text-align:center;margin-bottom:24px;">
+        <img src="/static/mitesp_logo.jpg" alt="MIT Logo" style="height:48px;width:auto;margin-bottom:12px;border-radius:8px;" />
+        <h2 style="font-size:1.4rem;font-weight:700;color:var(--text-main,#f8fafc);margin-bottom:4px;">WebGuard Login</h2>
+        <p style="font-size:0.82rem;color:var(--text-secondary,#94a3b8);">Sign in to access the monitor dashboard</p>
+      </div>
+
+      <div id="loginErrorAlert" style="display:none;background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);color:#ef4444;font-size:0.8rem;padding:10px 14px;border-radius:8px;margin-bottom:16px;"></div>
+
+      <form id="loginForm" onsubmit="event.preventDefault(); handleLogin();" style="display:flex;flex-direction:column;gap:16px;">
+        <div class="form-group">
+          <label class="form-label" for="loginUsername">Username</label>
+          <input type="text" id="loginUsername" class="form-input" placeholder="superadmin" required style="width:100%;padding:10px 14px;font-size:0.9rem;" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="loginPassword">Password</label>
+          <div class="input-with-toggle">
+            <input type="password" id="loginPassword" class="form-input" placeholder="••••••••••••" required style="width:100%;padding:10px 14px;font-size:0.9rem;" />
+            <button type="button" class="toggle-pwd" onclick="togglePwd('loginPassword', this)" aria-label="Toggle password visibility">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary" id="loginSubmitBtn" style="width:100%;padding:12px;font-size:0.9rem;margin-top:8px;">
+          Sign In
+        </button>
+      </form>
+    </div>
+  </div>
+
   <!-- ── App shell ──────────────────────────────────────────────────────── -->
   <div class="app">
 
     <!-- ── Sidebar ────────────────────────────────────────────────────── -->
     <aside class="sidebar" id="sidebar" role="navigation" aria-label="Main navigation">
 
-      <div class="sidebar-logo">
-        <div class="logo-icon" aria-hidden="true">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="2"/>
-            <path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"/>
-          </svg>
-        </div>
+      <div class="sidebar-logo" style="display:flex;align-items:center;gap:12px;">
+        <img src="/static/mitesp_logo.jpg" alt="MIT Logo" style="height:36px;width:auto;border-radius:6px;object-fit:contain;" />
         <div class="logo-text">
           <span class="logo-name">WebGuard</span>
           <span class="logo-sub">Monitor Dashboard</span>
@@ -62,6 +91,15 @@
           <span class="nav-label">Analytics</span>
         </button>
 
+        <button class="nav-btn" id="nav-db-logs" data-view="db-logs" aria-label="Database Logs">
+          <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+            <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+            <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+          </svg>
+          <span class="nav-label">Database Logs</span>
+        </button>
+
         <button class="nav-btn" id="nav-settings" data-view="settings" aria-label="Settings">
           <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="12" cy="12" r="3"/>
@@ -71,7 +109,24 @@
         </button>
       </nav>
 
-      <div class="sidebar-footer">
+      <div class="sidebar-footer" style="padding:14px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:10px;">
+        <!-- User Information & Account Actions (Bottom-Left Sidebar) -->
+        <div id="sidebarUserGroup" style="display:none;flex-direction:column;gap:8px;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:10px;padding:10px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+            <span class="status-pill pill--up" id="userRoleBadge" style="padding:3px 8px;font-size:0.73rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;">
+              👤 <span id="userNameLabel">superadmin (superadmin)</span>
+            </span>
+          </div>
+          <div style="display:flex;gap:6px;">
+            <button class="btn btn-ghost btn-sm" onclick="openChangePasswordModal()" style="flex:1;padding:4px 6px;font-size:0.72rem;justify-content:center;">
+              🔑 Password
+            </button>
+            <button class="btn btn-ghost btn-sm" onclick="handleLogout()" style="padding:4px 8px;font-size:0.72rem;color:var(--danger,#ef4444);justify-content:center;">
+              🚪 Logout
+            </button>
+          </div>
+        </div>
+
         <div class="refresh-info">
           <span class="refresh-dot" id="refreshDot" aria-hidden="true"></span>
           <span id="refreshLabel">Auto-refresh: 30s</span>
@@ -98,6 +153,17 @@
             <button class="btn btn-ghost btn-sm" id="toggleDaemonBtn" style="padding: 6px 12px;" disabled>
               Start Daemon
             </button>
+          </div>
+
+          <div class="auto-refresh-group" style="display:inline-flex;align-items:center;margin-right:6px;">
+            <select id="autoRefreshSelect" style="background:var(--bg-card);color:var(--text-main);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:0.8rem;cursor:pointer;">
+              <option value="5">Refresh: 5s</option>
+              <option value="10">Refresh: 10s</option>
+              <option value="15" selected>Refresh: 15s</option>
+              <option value="30">Refresh: 30s</option>
+              <option value="60">Refresh: 60s</option>
+              <option value="0">Refresh: Off</option>
+            </select>
           </div>
 
           <button class="btn btn-ghost" id="refreshBtn" aria-label="Refresh status">
@@ -262,46 +328,62 @@
               </svg>
               Voice Calls
             </button>
-            <button class="tab-btn" id="tab-btn-google" role="tab" aria-selected="false" aria-controls="tab-google" data-tab="google">
+            <button class="tab-btn" id="tab-btn-storage" role="tab" aria-selected="false" aria-controls="tab-storage" data-tab="storage">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
+                <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+                <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+                <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
               </svg>
-              Google Sheets
+              Storage
+            </button>
+            <button class="tab-btn" id="tab-btn-users" role="tab" aria-selected="false" aria-controls="tab-users" data-tab="users" style="display:none;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle>
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+              </svg>
+              User Management
             </button>
           </div>
 
           <!-- Heartbeat tab -->
           <div class="tab-panel active" id="tab-heartbeat" role="tabpanel" aria-labelledby="tab-btn-heartbeat">
             <div class="card settings-card">
-              <div class="card-header">
-                <h3 class="card-title">Heartbeat Interval</h3>
-                <p class="card-sub">How often the monitor checks each URL. Seconds take priority over minutes if both are set.</p>
+              <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+                <div>
+                  <h3 class="card-title">Heartbeat Interval</h3>
+                  <p class="card-sub">How often the monitor checks each URL. Seconds take priority over minutes if both are set.</p>
+                </div>
+                <button class="btn btn-ghost btn-sm" onclick="enableEditConfig('heartbeat')" id="edit-heartbeat">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                  Edit Settings
+                </button>
               </div>
               <div class="form-grid">
                 <div class="form-group">
                   <label class="form-label" for="cfg-CHECK_INTERVAL_SECONDS">Check Interval (seconds)</label>
-                  <input type="number" id="cfg-CHECK_INTERVAL_SECONDS" class="form-input" placeholder="e.g. 60" min="5" />
+                  <input type="number" id="cfg-CHECK_INTERVAL_SECONDS" class="form-input" placeholder="e.g. 60" min="5" disabled />
                   <span class="form-hint">Takes priority if set. Minimum: 5</span>
                 </div>
                 <div class="form-group">
                   <label class="form-label" for="cfg-CHECK_INTERVAL_MINUTES">Check Interval (minutes)</label>
-                  <input type="number" id="cfg-CHECK_INTERVAL_MINUTES" class="form-input" placeholder="e.g. 10" min="1" />
+                  <input type="number" id="cfg-CHECK_INTERVAL_MINUTES" class="form-input" placeholder="e.g. 10" min="1" disabled />
                   <span class="form-hint">Used when seconds is empty</span>
                 </div>
                 <div class="form-group">
                   <label class="form-label" for="cfg-REQUEST_TIMEOUT_SECONDS">Request Timeout (seconds)</label>
-                  <input type="number" id="cfg-REQUEST_TIMEOUT_SECONDS" class="form-input" placeholder="e.g. 10" min="1" />
+                  <input type="number" id="cfg-REQUEST_TIMEOUT_SECONDS" class="form-input" placeholder="e.g. 10" min="1" disabled />
                   <span class="form-hint">Max wait time per URL before marking as timeout</span>
                 </div>
                 <div class="form-group">
                   <label class="form-label" for="cfg-SLOW_THRESHOLD_SECONDS">Slow Alert Threshold (seconds)</label>
-                  <input type="number" id="cfg-SLOW_THRESHOLD_SECONDS" class="form-input" placeholder="e.g. 1.5" min="0.1" step="0.1" />
+                  <input type="number" id="cfg-SLOW_THRESHOLD_SECONDS" class="form-input" placeholder="e.g. 1.5" min="0.1" step="0.1" disabled />
                   <span class="form-hint">Responses slower than this trigger a MEDIUM alert</span>
                 </div>
               </div>
-              <div class="form-actions">
+              <div class="form-actions" id="actions-heartbeat" style="display:none;gap:10px;">
+                <button class="btn btn-ghost" onclick="cancelEditConfig('heartbeat')" id="cancel-heartbeat">Cancel</button>
                 <button class="btn btn-primary" onclick="saveConfig('heartbeat')" id="save-heartbeat">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
                   </svg>
                   Save Heartbeat Settings
@@ -313,28 +395,34 @@
           <!-- Email tab -->
           <div class="tab-panel" id="tab-email" role="tabpanel" aria-labelledby="tab-btn-email" style="display:none">
             <div class="card settings-card">
-              <div class="card-header">
-                <h3 class="card-title">Email Alert Configuration</h3>
-                <p class="card-sub">SMTP settings for sending downtime notifications. Gmail App Password recommended.</p>
+              <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+                <div>
+                  <h3 class="card-title">Email Alert Configuration</h3>
+                  <p class="card-sub">SMTP settings for sending downtime notifications. Gmail App Password recommended.</p>
+                </div>
+                <button class="btn btn-ghost btn-sm" onclick="enableEditConfig('email')" id="edit-email">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                  Edit Settings
+                </button>
               </div>
               <div class="form-grid">
                 <div class="form-group">
                   <label class="form-label" for="cfg-SMTP_SERVER">SMTP Server</label>
-                  <input type="text" id="cfg-SMTP_SERVER" class="form-input" placeholder="smtp.gmail.com" />
+                  <input type="text" id="cfg-SMTP_SERVER" class="form-input" placeholder="smtp.gmail.com" disabled />
                 </div>
                 <div class="form-group">
                   <label class="form-label" for="cfg-SMTP_PORT">SMTP Port</label>
-                  <input type="number" id="cfg-SMTP_PORT" class="form-input" placeholder="587" />
+                  <input type="number" id="cfg-SMTP_PORT" class="form-input" placeholder="587" disabled />
                   <span class="form-hint">587 for TLS · 465 for SSL</span>
                 </div>
                 <div class="form-group form-group--full">
                   <label class="form-label" for="cfg-SMTP_USERNAME">Sender Email</label>
-                  <input type="email" id="cfg-SMTP_USERNAME" class="form-input" placeholder="sender@gmail.com" />
+                  <input type="email" id="cfg-SMTP_USERNAME" class="form-input" placeholder="sender@gmail.com" disabled />
                 </div>
                 <div class="form-group form-group--full">
                   <label class="form-label" for="cfg-SMTP_PASSWORD">App Password</label>
                   <div class="input-with-toggle">
-                    <input type="password" id="cfg-SMTP_PASSWORD" class="form-input" placeholder="xxxx xxxx xxxx xxxx" autocomplete="off" />
+                    <input type="password" id="cfg-SMTP_PASSWORD" class="form-input" placeholder="xxxx xxxx xxxx xxxx" autocomplete="off" disabled />
                     <button type="button" class="toggle-pwd" onclick="togglePwd('cfg-SMTP_PASSWORD', this)" aria-label="Toggle password visibility">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
@@ -344,12 +432,13 @@
                 </div>
                 <div class="form-group form-group--full">
                   <label class="form-label" for="cfg-NOTIFICATION_RECEIVER">Notification Receiver Email</label>
-                  <input type="email" id="cfg-NOTIFICATION_RECEIVER" class="form-input" placeholder="receiver@example.com" />
+                  <input type="email" id="cfg-NOTIFICATION_RECEIVER" class="form-input" placeholder="receiver@example.com" disabled />
                 </div>
               </div>
-              <div class="form-actions">
+              <div class="form-actions" id="actions-email" style="display:none;gap:10px;">
+                <button class="btn btn-ghost" onclick="cancelEditConfig('email')" id="cancel-email">Cancel</button>
                 <button class="btn btn-primary" onclick="saveConfig('email')" id="save-email">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
                   </svg>
                   Save Email Settings
@@ -361,19 +450,25 @@
           <!-- Voice tab -->
           <div class="tab-panel" id="tab-voice" role="tabpanel" aria-labelledby="tab-btn-voice" style="display:none">
             <div class="card settings-card">
-              <div class="card-header">
-                <h3 class="card-title">Twilio Voice Call Configuration</h3>
-                <p class="card-sub">Phone call alerts are triggered on HIGH severity events (non-200 status changes).</p>
+              <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+                <div>
+                  <h3 class="card-title">Twilio Voice Call Configuration</h3>
+                  <p class="card-sub">Phone call alerts are triggered on HIGH severity events (non-200 status changes).</p>
+                </div>
+                <button class="btn btn-ghost btn-sm" onclick="enableEditConfig('voice')" id="edit-voice">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                  Edit Settings
+                </button>
               </div>
               <div class="form-grid">
                 <div class="form-group form-group--full">
                   <label class="form-label" for="cfg-TWILIO_ACCOUNT_SID">Account SID</label>
-                  <input type="text" id="cfg-TWILIO_ACCOUNT_SID" class="form-input" placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" />
+                  <input type="text" id="cfg-TWILIO_ACCOUNT_SID" class="form-input" placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" disabled />
                 </div>
                 <div class="form-group form-group--full">
                   <label class="form-label" for="cfg-TWILIO_AUTH_TOKEN">Auth Token</label>
                   <div class="input-with-toggle">
-                    <input type="password" id="cfg-TWILIO_AUTH_TOKEN" class="form-input" placeholder="Your Twilio auth token" autocomplete="off" />
+                    <input type="password" id="cfg-TWILIO_AUTH_TOKEN" class="form-input" placeholder="Your Twilio auth token" autocomplete="off" disabled />
                     <button type="button" class="toggle-pwd" onclick="togglePwd('cfg-TWILIO_AUTH_TOKEN', this)" aria-label="Toggle token visibility">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
@@ -383,21 +478,24 @@
                 </div>
                 <div class="form-group">
                   <label class="form-label" for="cfg-TWILIO_FROM_NUMBER">From Number</label>
-                  <input type="tel" id="cfg-TWILIO_FROM_NUMBER" class="form-input" placeholder="+1234567890" />
+                  <input type="tel" id="cfg-TWILIO_FROM_NUMBER" class="form-input" placeholder="+1234567890" disabled />
+                  <span class="form-hint">Purchased virtual number from your Twilio Console.</span>
                 </div>
                 <div class="form-group">
                   <label class="form-label" for="cfg-TWILIO_TO_NUMBER">To Number (alert recipient)</label>
-                  <input type="tel" id="cfg-TWILIO_TO_NUMBER" class="form-input" placeholder="+0987654321" />
+                  <input type="tel" id="cfg-TWILIO_TO_NUMBER" class="form-input" placeholder="+0987654321" disabled />
+                  <span class="form-hint">Configure receiver number via Twilio Console (must be a verified caller ID for Trial Accounts).</span>
                 </div>
                 <div class="form-group form-group--full">
                   <label class="form-label" for="cfg-TWILIO_PLAY_URL">Custom Audio URL <span class="form-optional">(optional)</span></label>
-                  <input type="url" id="cfg-TWILIO_PLAY_URL" class="form-input" placeholder="https://example.com/alert.mp3" />
+                  <input type="url" id="cfg-TWILIO_PLAY_URL" class="form-input" placeholder="https://example.com/alert.mp3" disabled />
                   <span class="form-hint">Leave blank to use text-to-speech</span>
                 </div>
               </div>
-              <div class="form-actions">
+              <div class="form-actions" id="actions-voice" style="display:none;gap:10px;">
+                <button class="btn btn-ghost" onclick="cancelEditConfig('voice')" id="cancel-voice">Cancel</button>
                 <button class="btn btn-primary" onclick="saveConfig('voice')" id="save-voice">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
                   </svg>
                   Save Voice Settings
@@ -406,32 +504,108 @@
             </div>
           </div>
 
-          <!-- Google Sheets tab -->
-          <div class="tab-panel" id="tab-google" role="tabpanel" aria-labelledby="tab-btn-google" style="display:none">
+          <!-- Storage tab (SQLite primary + Google Sheets fallback) -->
+          <div class="tab-panel" id="tab-storage" role="tabpanel" aria-labelledby="tab-btn-storage" style="display:none">
             <div class="card settings-card">
-              <div class="card-header">
-                <h3 class="card-title">Google Sheets Logging</h3>
-                <p class="card-sub">Logs every heartbeat check to a Google Spreadsheet with per-domain tabs.</p>
+              <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+                <div>
+                  <h3 class="card-title">Storage Configuration</h3>
+                  <p class="card-sub">Primary local log storage using embedded SQLite, with optional Google Sheets fallback.</p>
+                </div>
+                <button class="btn btn-ghost btn-sm" onclick="enableEditConfig('storage')" id="edit-storage">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                  Edit Settings
+                </button>
               </div>
               <div class="form-grid">
                 <div class="form-group form-group--full">
-                  <label class="form-label" for="cfg-GOOGLE_SHEET_ID">Spreadsheet ID</label>
-                  <input type="text" id="cfg-GOOGLE_SHEET_ID" class="form-input" placeholder="Your Google Sheet ID from the URL" />
-                  <span class="form-hint">Found in the sheet URL: …/spreadsheets/d/<strong>SHEET_ID</strong>/edit</span>
+                  <label class="form-label" for="cfg-SQLITE_DB_PATH">Primary SQLite Database File Path</label>
+                  <input type="text" id="cfg-SQLITE_DB_PATH" class="form-input" placeholder="storage/monitor_logs.db" disabled />
+                  <span class="form-hint">Fast, local embedded database path. Default: <code>storage/monitor_logs.db</code></span>
+                </div>
+
+                <div class="form-group form-group--full" style="border-top:1px solid var(--border);padding-top:16px;margin-top:8px;">
+                  <h4 style="font-size:0.95rem;font-weight:600;color:var(--text-main);margin-bottom:6px;">Google Sheets Fallback (Optional)</h4>
+                  <p class="card-sub" style="margin-bottom:12px;">Secondary fallback storage. Leave blank if you only want local SQLite storage.</p>
+                </div>
+
+                <div class="form-group form-group--full">
+                  <label class="form-label" for="cfg-GOOGLE_SHEET_ID">Google Spreadsheet ID</label>
+                  <input type="text" id="cfg-GOOGLE_SHEET_ID" class="form-input" placeholder="1Q9D12liCcdHKuLg7vbob4R1YHasSmXqeyBK9tM1eidk" disabled />
+                  <span class="form-hint">Found in sheet URL: …/spreadsheets/d/<strong>SHEET_ID</strong>/edit</span>
                 </div>
                 <div class="form-group form-group--full">
                   <label class="form-label" for="cfg-GOOGLE_CREDS_FILE">Credentials File Path</label>
-                  <input type="text" id="cfg-GOOGLE_CREDS_FILE" class="form-input" placeholder="storage/credentials.json" />
-                  <span class="form-hint">Relative to the project root. Download from Google Cloud Console.</span>
+                  <input type="text" id="cfg-GOOGLE_CREDS_FILE" class="form-input" placeholder="storage/credentials.json" disabled />
+                  <span class="form-hint">Relative to project root. Download from Google Cloud Console.</span>
                 </div>
               </div>
-              <div class="form-actions">
-                <button class="btn btn-primary" onclick="saveConfig('google')" id="save-google">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <div class="form-actions" id="actions-storage" style="display:none;gap:10px;">
+                <button class="btn btn-ghost" onclick="cancelEditConfig('storage')" id="cancel-storage">Cancel</button>
+                <button class="btn btn-primary" onclick="saveConfig('storage')" id="save-storage">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
                   </svg>
-                  Save Sheets Settings
+                  Save Storage Settings
                 </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- User Management tab (Superadmin only) -->
+          <div class="tab-panel" id="tab-users" role="tabpanel" aria-labelledby="tab-btn-users" style="display:none">
+            <div class="card settings-card">
+              <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+                <div>
+                  <h3 class="card-title">User Management</h3>
+                  <p class="card-sub">Manage administrator accounts and passwords. Restricted to superadmin.</p>
+                </div>
+              </div>
+
+              <!-- Create User Form -->
+              <div style="border-bottom:1px solid var(--border);padding-bottom:20px;margin-bottom:20px;">
+                <h4 style="font-size:0.9rem;font-weight:600;color:var(--text-main);margin-bottom:12px;">Create New Account</h4>
+                <div class="form-grid" style="grid-template-columns: 1fr 1fr 120px auto; gap: 12px; align-items: flex-end;">
+                  <div class="form-group">
+                    <label class="form-label" for="newUsernameInput">Username</label>
+                    <input type="text" id="newUsernameInput" class="form-input" placeholder="admin2" />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" for="newPasswordInput">Password</label>
+                    <input type="password" id="newPasswordInput" class="form-input" placeholder="Set password" />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label" for="newRoleSelect">Role</label>
+                    <select id="newRoleSelect" class="form-input" style="padding:8px 10px;">
+                      <option value="admin" selected>Admin</option>
+                      <option value="superadmin">Superadmin</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <button class="btn btn-primary" onclick="createNewUserAccount()">
+                      Create User
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- User List Table -->
+              <h4 style="font-size:0.9rem;font-weight:600;color:var(--text-main);margin-bottom:12px;">Registered Accounts</h4>
+              <div style="overflow-x:auto;">
+                <table style="width:100%;border-collapse:collapse;text-align:left;font-size:0.85rem;">
+                  <thead>
+                    <tr style="border-bottom:1px solid var(--border);color:var(--text-secondary);font-size:0.78rem;text-transform:uppercase;">
+                      <th style="padding:10px 14px;">ID</th>
+                      <th style="padding:10px 14px;">Username</th>
+                      <th style="padding:10px 14px;">Role</th>
+                      <th style="padding:10px 14px;">Created At</th>
+                      <th style="padding:10px 14px;text-align:right;">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="usersTableBody">
+                    <tr><td colspan="5" style="padding:16px;text-align:center;color:var(--text-secondary);">Loading accounts...</td></tr>
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>
@@ -483,6 +657,98 @@
             </div>
           </div>
         </section>
+
+        <!-- ── DATABASE LOGS VIEW ────────────────────────────────────────── -->
+        <section class="view" id="view-db-logs" aria-label="Database Logs" style="display:none">
+          <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+            <div>
+              <h3 class="section-title">Database Logs</h3>
+              <span class="section-hint">Raw heartbeat check records from SQLite (<code>storage/monitor_logs.db</code>)</span>
+            </div>
+            <div style="display:flex;gap:10px;">
+              <button class="btn btn-ghost btn-sm" onclick="exportLogs('csv')">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Export CSV
+              </button>
+              <button class="btn btn-primary btn-sm" onclick="exportLogs('json')">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Export JSON
+              </button>
+            </div>
+          </div>
+
+          <!-- Filter Toolbar -->
+          <div class="filter-toolbar" style="display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:12px 16px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <label for="dbLogDomainFilter" style="font-size:0.8rem;font-weight:600;color:var(--text-secondary);white-space:nowrap;">Domain:</label>
+              <select id="dbLogDomainFilter" class="form-input" style="width:180px;padding:6px 12px;font-size:0.8rem;background:var(--bg-input);border-color:var(--border-strong);">
+                <option value="all">All Domains</option>
+              </select>
+            </div>
+
+            <div style="display:flex;align-items:center;gap:8px;">
+              <label for="dbLogStatusFilter" style="font-size:0.8rem;font-weight:600;color:var(--text-secondary);white-space:nowrap;">Status:</label>
+              <select id="dbLogStatusFilter" class="form-input" style="width:150px;padding:6px 12px;font-size:0.8rem;background:var(--bg-input);border-color:var(--border-strong);">
+                <option value="all">All Statuses</option>
+                <option value="200">200 OK</option>
+                <option value="error">Outage / Error</option>
+                <option value="timeout">Timeout</option>
+                <option value="slow">Slow</option>
+              </select>
+            </div>
+
+            <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:200px;">
+              <label for="dbLogSearchInput" style="font-size:0.8rem;font-weight:600;color:var(--text-secondary);white-space:nowrap;">Search:</label>
+              <input type="text" id="dbLogSearchInput" class="form-input" placeholder="Search URL or status..." style="padding:6px 12px;font-size:0.8rem;" />
+            </div>
+
+            <div style="display:flex;align-items:center;gap:8px;">
+              <label for="dbLogTimeFilter" style="font-size:0.8rem;font-weight:600;color:var(--text-secondary);white-space:nowrap;">Time Range:</label>
+              <select id="dbLogTimeFilter" class="form-input" style="width:140px;padding:6px 12px;font-size:0.8rem;background:var(--bg-input);border-color:var(--border-strong);">
+                <option value="1h">Last 1 Hour</option>
+                <option value="8h">Last 8 Hours</option>
+                <option value="24h" selected>Last 24 Hours</option>
+                <option value="7d">Last 7 Days</option>
+                <option value="all">All Logs</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Logs Data Table -->
+          <div class="card" style="padding:0;overflow:hidden;">
+            <div style="overflow-x:auto;">
+              <table class="db-logs-table" style="width:100%;border-collapse:collapse;text-align:left;font-size:0.85rem;">
+                <thead>
+                  <tr style="background:var(--bg-card);border-bottom:1px solid var(--border);color:var(--text-secondary);font-size:0.78rem;text-transform:uppercase;letter-spacing:0.05em;">
+                    <th style="padding:12px 16px;">ID</th>
+                    <th style="padding:12px 16px;">Timestamp</th>
+                    <th style="padding:12px 16px;">Website URL</th>
+                    <th style="padding:12px 16px;">Domain</th>
+                    <th style="padding:12px 16px;">Status</th>
+                    <th style="padding:12px 16px;">Latency</th>
+                    <th style="padding:12px 16px;">Speed</th>
+                    <th style="padding:12px 16px;">Alert Sent</th>
+                  </tr>
+                </thead>
+                <tbody id="dbLogsTableBody">
+                  <tr>
+                    <td colspan="8" style="padding:24px;text-align:center;color:var(--text-secondary);">Loading database logs...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Table Pagination Bar -->
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-top:1px solid var(--border);background:var(--bg-card);font-size:0.8rem;color:var(--text-secondary);">
+              <div id="dbLogsCountInfo">Showing 0 of 0 logs</div>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <button class="btn btn-ghost btn-sm" id="btnPrevLogsPage" disabled onclick="changeLogsPage(-1)">Previous</button>
+                <span id="dbLogsPageIndicator">Page 1 of 1</span>
+                <button class="btn btn-ghost btn-sm" id="btnNextLogsPage" disabled onclick="changeLogsPage(1)">Next</button>
+              </div>
+            </div>
+          </div>
+        </section>
       </div><!-- /content-area -->
     </main>
   </div><!-- /app -->
@@ -507,6 +773,37 @@
 
   <!-- ── Toast notification ─────────────────────────────────────────────── -->
   <div class="toast-container" id="toastContainer" aria-live="assertive" aria-atomic="true"></div>
+
+  <!-- ── Change Password Modal ─────────────────────────────────────────── -->
+  <div id="changePwdModal" style="display:none;position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);align-items:center;justify-content:center;padding:20px;">
+    <div class="card" style="width:100%;max-width:380px;padding:24px;border:1px solid var(--border);border-radius:14px;background:var(--bg-card,#0f172a);box-shadow:0 20px 40px rgba(0,0,0,0.5);">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <h3 style="font-size:1.1rem;font-weight:700;color:var(--text-main,#f8fafc);margin:0;">Change Password</h3>
+        <button class="btn btn-ghost btn-sm" onclick="closeChangePasswordModal()" style="padding:2px 6px;">✕</button>
+      </div>
+
+      <div id="changePwdAlert" style="display:none;font-size:0.8rem;padding:8px 12px;border-radius:8px;margin-bottom:12px;"></div>
+
+      <form id="changePwdForm" onsubmit="event.preventDefault(); submitChangePassword();" style="display:flex;flex-direction:column;gap:12px;">
+        <div class="form-group">
+          <label class="form-label" for="currPasswordInput">Current Password</label>
+          <input type="password" id="currPasswordInput" class="form-input" required style="width:100%;padding:8px 12px;font-size:0.85rem;" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="newPwdInput">New Password</label>
+          <input type="password" id="newPwdInput" class="form-input" required style="width:100%;padding:8px 12px;font-size:0.85rem;" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="confirmPwdInput">Confirm New Password</label>
+          <input type="password" id="confirmPwdInput" class="form-input" required style="width:100%;padding:8px 12px;font-size:0.85rem;" />
+        </div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px;">
+          <button type="button" class="btn btn-ghost" onclick="closeChangePasswordModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="changePwdSubmitBtn">Save Password</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <script src="/static/app.js"></script>
 </body>

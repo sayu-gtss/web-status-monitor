@@ -1,21 +1,130 @@
 import os
 import sys
 import json
+import time
 import subprocess
 from pathlib import Path
-from flask import Flask, jsonify, request, render_template, Response, stream_with_context
+from flask import Flask, jsonify, request, render_template, Response, stream_with_context, session
 
 # ---------------------------------------------------------------------------
 # Paths — project root is one level above this file (dashboard/)
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+from storage.sqlite_logger import SQLiteLogger
 ENV_FILE = PROJECT_ROOT / ".env"
 STATE_FILE = PROJECT_ROOT / "storage" / "monitor_state.json"
 LATENCY_FILE = PROJECT_ROOT / "storage" / "latency_history.json"
 MONITOR_SCRIPT = PROJECT_ROOT / "monitor.py"
 PID_FILE = PROJECT_ROOT / "storage" / "monitor.pid"
+LOG_FILE = PROJECT_ROOT / "storage" / "monitor.log"
 
 app = Flask(__name__)
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "webguard-superadmin-secret-key-2026")
+
+
+# ---------------------------------------------------------------------------
+# Authentication Middleware & Endpoints
+# ---------------------------------------------------------------------------
+
+@app.before_request
+def check_authentication():
+    # Public static files & login API endpoints do not require session auth
+    public_paths = ["/static/", "/api/auth/login", "/api/auth/logout"]
+    if any(request.path.startswith(p) for p in public_paths):
+        return None
+    # For API endpoints, check session
+    if "user" not in session:
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "Unauthorized. Please log in.", "authenticated": False}), 401
+    return None
+
+@app.route("/api/auth/login", methods=["POST"])
+def auth_login():
+    data = request.json or {}
+    username = data.get("username", "").strip()
+    password = data.get("password", "").strip()
+    if not username or not password:
+        return jsonify({"error": "Username and password are required"}), 400
+
+    sqlite_logger = SQLiteLogger()
+    user = sqlite_logger.verify_user(username, password)
+    if user:
+        session["user"] = user
+        return jsonify({"success": True, "user": user})
+    return jsonify({"error": "Invalid username or password"}), 401
+
+@app.route("/api/auth/logout", methods=["POST"])
+def auth_logout():
+    session.clear()
+    return jsonify({"success": True})
+
+@app.route("/api/auth/me", methods=["GET"])
+def auth_me():
+    user = session.get("user")
+    if user:
+        return jsonify({"authenticated": True, "user": user})
+    return jsonify({"authenticated": False}), 401
+
+@app.route("/api/auth/change-password", methods=["POST"])
+def auth_change_password():
+    user = session.get("user")
+    if not user:
+        return jsonify({"error": "Unauthorized. Please log in."}), 401
+    data = request.json or {}
+    curr_pwd = data.get("current_password", "").strip()
+    new_pwd = data.get("new_password", "").strip()
+
+    if not curr_pwd or not new_pwd:
+        return jsonify({"error": "Current password and new password are required"}), 400
+
+    sqlite_logger = SQLiteLogger()
+    success, msg = sqlite_logger.change_password(user["username"], curr_pwd, new_pwd)
+    if success:
+        return jsonify({"success": True, "message": msg})
+    return jsonify({"error": msg}), 400
+
+# ---------------------------------------------------------------------------
+# User Management Endpoints (Superadmin Restricted)
+# ---------------------------------------------------------------------------
+
+@app.route("/api/users", methods=["GET"])
+def list_users():
+    user = session.get("user")
+    if not user or user.get("role") != "superadmin":
+        return jsonify({"error": "Access denied. Superadmin privileges required."}), 403
+    sqlite_logger = SQLiteLogger()
+    users = sqlite_logger.get_all_users()
+    return jsonify({"users": users})
+
+@app.route("/api/users", methods=["POST"])
+def create_new_user():
+    user = session.get("user")
+    if not user or user.get("role") != "superadmin":
+        return jsonify({"error": "Access denied. Superadmin privileges required."}), 403
+    data = request.json or {}
+    username = data.get("username", "").strip()
+    password = data.get("password", "").strip()
+    role = data.get("role", "admin").strip()
+    if not username or not password:
+        return jsonify({"error": "Username and password are required"}), 400
+    sqlite_logger = SQLiteLogger()
+    success, msg = sqlite_logger.create_user(username, password, role)
+    if success:
+        return jsonify({"success": True, "message": msg})
+    return jsonify({"error": msg}), 400
+
+@app.route("/api/users/<username>", methods=["DELETE"])
+def delete_existing_user(username):
+    user = session.get("user")
+    if not user or user.get("role") != "superadmin":
+        return jsonify({"error": "Access denied. Superadmin privileges required."}), 403
+    sqlite_logger = SQLiteLogger()
+    success, msg = sqlite_logger.delete_user(username)
+    if success:
+        return jsonify({"success": True, "message": msg})
+    return jsonify({"error": msg}), 400
 
 
 # ---------------------------------------------------------------------------
@@ -106,20 +215,48 @@ def update_config():
 
 @app.route("/api/status", methods=["GET"])
 def get_status():
-    """Return the current monitor_state.json as JSON, filtered to active monitored URLs."""
+    """Return the current monitor_state.json as JSON, filtered to active monitored URLs, with SQLite DB fallback."""
     env = read_env()
     urls_str = env.get("WEBSITES_TO_MONITOR", "")
-    active_urls = {u.strip() for u in urls_str.split(",") if u.strip()}
+    active_urls = [u.strip() for u in urls_str.split(",") if u.strip()]
 
+    state = {}
     if STATE_FILE.exists():
         with open(STATE_FILE, "r", encoding="utf-8") as fh:
             try:
                 state = json.load(fh)
             except Exception:
                 state = {}
-            filtered_state = {url: data for url, data in state.items() if url in active_urls}
-            return jsonify(filtered_state)
-    return jsonify({})
+
+    filtered_state = {}
+    from storage.sqlite_logger import SQLiteLogger
+    sqlite_logger = SQLiteLogger()
+
+    for url in active_urls:
+        if url in state:
+            filtered_state[url] = state[url]
+        else:
+            # Fallback to SQLite database for recently logged check results
+            recent_logs = sqlite_logger.get_recent_logs(limit=1, website_url=url)
+            if recent_logs and len(recent_logs) > 0:
+                last_log = recent_logs[0]
+                status_str = "200 OK" if last_log.get("status_code") == 200 else str(last_log.get("status_desc") or "Error")
+                filtered_state[url] = {
+                    "status": status_str,
+                    "last_check": last_log.get("timestamp"),
+                    "down_since": None,
+                    "consecutive_failures": 0,
+                    "alerted": False
+                }
+            else:
+                filtered_state[url] = {
+                    "status": "Checking...",
+                    "last_check": "Pending initial check",
+                    "down_since": None,
+                    "consecutive_failures": 0,
+                    "alerted": False
+                }
+    return jsonify(filtered_state)
 
 
 @app.route("/api/latency", methods=["GET"])
@@ -138,6 +275,17 @@ def get_latency():
             filtered_history = {url: data for url, data in history.items() if url in active_urls}
             return jsonify(filtered_history)
     return jsonify({})
+
+
+@app.route("/api/db-logs", methods=["GET"])
+def get_db_logs():
+    """Return recent check logs from SQLite database."""
+    limit = request.args.get("limit", default=2000, type=int)
+    website_url = request.args.get("url", default=None, type=str)
+    from storage.sqlite_logger import SQLiteLogger
+    logger = SQLiteLogger()
+    logs = logger.get_recent_logs(limit=limit, website_url=website_url)
+    return jsonify({"logs": logs})
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +362,7 @@ def run_check():
     def generate():
         try:
             process = subprocess.Popen(
-                [sys.executable, str(MONITOR_SCRIPT), "--once"],
+                [sys.executable, "-u", str(MONITOR_SCRIPT), "--once"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -251,6 +399,10 @@ def is_daemon_running() -> tuple[bool, int or None]:
         with open(PID_FILE, "r", encoding="utf-8") as f:
             pid = int(f.read().strip())
     except Exception:
+        try:
+            PID_FILE.unlink()
+        except Exception:
+            pass
         return False, None
 
     # Check if PID is active
@@ -289,20 +441,38 @@ def start_daemon():
         return jsonify({"success": True, "message": "Daemon already running", "pid": pid})
 
     try:
-        # Spawn daemon process
-        process = subprocess.Popen(
-            [sys.executable, str(MONITOR_SCRIPT)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            cwd=str(PROJECT_ROOT),
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
-        )
-        
+        # Spawn daemon process and capture startup output for diagnostics.
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        log_fh = open(LOG_FILE, "a", encoding="utf-8")
+
+        start_kwargs = {
+            "cwd": str(PROJECT_ROOT),
+            "stdout": log_fh,
+            "stderr": subprocess.STDOUT,
+            "text": True,
+        }
+        if os.name == 'nt':
+            creationflags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+            start_kwargs["creationflags"] = creationflags
+
+        process = subprocess.Popen([sys.executable, str(MONITOR_SCRIPT)], **start_kwargs)
+
         # Save PID
         with open(PID_FILE, "w", encoding="utf-8") as f:
             f.write(str(process.pid))
-            
-        return jsonify({"success": True, "pid": process.pid})
+
+        # Give the monitor a moment to fail fast if it cannot start.
+        time.sleep(1)
+        if process.poll() is not None:
+            message = f"Monitor process exited immediately with code {process.returncode}. See {LOG_FILE} for details."
+            try:
+                if PID_FILE.exists():
+                    PID_FILE.unlink()
+            except Exception:
+                pass
+            return jsonify({"error": message}), 500
+
+        return jsonify({"success": True, "pid": process.pid, "log_file": str(LOG_FILE)})
     except Exception as e:
         return jsonify({"error": f"Failed to start daemon: {e}"}), 500
 
@@ -318,13 +488,59 @@ def stop_daemon():
             subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         else:
             os.kill(pid, 15)  # SIGTERM
-            
+
         if PID_FILE.exists():
             PID_FILE.unlink()
-            
+
         return jsonify({"success": True})
     except Exception as e:
         return jsonify({"error": f"Failed to stop daemon: {e}"}), 500
+
+
+# ---------------------------------------------------------------------------
+# Database Logs Export Endpoint
+# ---------------------------------------------------------------------------
+
+@app.route("/api/db-logs/export", methods=["GET"])
+def export_db_logs():
+    fmt = request.args.get("format", default="csv", type=str).lower()
+    limit = request.args.get("limit", default=10000, type=int)
+    try:
+        from storage.sqlite_logger import SQLiteLogger
+        sqlite_logger = SQLiteLogger()
+        logs = sqlite_logger.get_recent_logs(limit=limit)
+
+        if fmt == "json":
+            return Response(
+                json.dumps(logs, indent=2),
+                mimetype="application/json",
+                headers={"Content-Disposition": "attachment;filename=monitor_logs.json"}
+            )
+        else:
+            import csv
+            import io
+            output = io.StringIO()
+            writer = csv.writer(output)
+            writer.writerow(["ID", "Timestamp", "Website URL", "Domain", "Status Code", "Status Description", "Response Time (ms)", "Speed Rating", "Notification Sent"])
+            for row in logs:
+                writer.writerow([
+                    row.get("id"),
+                    row.get("timestamp"),
+                    row.get("website_url"),
+                    row.get("domain"),
+                    row.get("status_code"),
+                    row.get("status_desc"),
+                    row.get("response_time_ms"),
+                    row.get("speed_rating"),
+                    "Yes" if row.get("notification_sent") else "No"
+                ])
+            return Response(
+                output.getvalue(),
+                mimetype="text/csv",
+                headers={"Content-Disposition": "attachment;filename=monitor_logs.csv"}
+            )
+    except Exception as e:
+        return jsonify({"error": f"Failed to export logs: {e}"}), 500
 
 
 # ---------------------------------------------------------------------------

@@ -8,9 +8,9 @@ import requests
 from dotenv import load_dotenv
 import schedule
 
-from src.notifier import send_downtime_alert, send_recovery_alert, send_slow_alert
+from src.notifier import send_downtime_alert, send_timeout_alert, send_recovery_alert, send_slow_alert
 from src.caller import make_voice_call
-from storage.sheet_logger import SheetLogger
+from storage.sqlite_logger import SQLiteLogger
 
 # Load configurations
 load_dotenv()
@@ -64,18 +64,21 @@ def log_latency(url, latency_ms, status_desc):
     except Exception as e:
         print(f"[Monitor] Error saving latency history: {e}")
 
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 def check_website(url, timeout):
     """
     Checks the status of a website.
-    Returns (status_code, status_description, is_up, error_message).
+    Returns (status_code, status_description, is_up, error_message, latency_ms).
     """
     # Use a standard browser User-Agent so we don't get blocked by WAFs/firewalls
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
     try:
-        # We perform a GET request with redirect following (timeout is disabled as requested)
-        response = requests.get(url, headers=headers, timeout=None, allow_redirects=True)
+        # We perform a GET request with verify=False to support VPN/internal appliances with self-signed certs
+        response = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True, verify=False)
         status_code = response.status_code
         latency_ms = response.elapsed.total_seconds() * 1000
         
@@ -113,6 +116,12 @@ def run_checks(logger):
     except ValueError:
         slow_threshold = 1.5
     
+    failure_threshold_val = os.getenv("CONSECUTIVE_FAILURES_THRESHOLD", "2")
+    try:
+        failure_threshold = int(failure_threshold_val)
+    except ValueError:
+        failure_threshold = 2
+
     state = load_state()
     current_time = datetime.now()
     
@@ -142,93 +151,114 @@ def run_checks(logger):
             "status": "UNKNOWN", 
             "down_since": None,
             "last_alert_msg_id": None,
-            "last_alert_subject": None
+            "last_alert_subject": None,
+            "consecutive_failures": 0,
+            "alerted": False
         })
         prev_status = prev_data.get("status", "UNKNOWN")
         prev_down_since = prev_data.get("down_since")
         last_alert_msg_id = prev_data.get("last_alert_msg_id")
         last_alert_subject = prev_data.get("last_alert_subject")
+        consecutive_failures = prev_data.get("consecutive_failures", 0)
+        already_alerted = prev_data.get("alerted", False)
         
         notification_sent = False
-        status_changed = (current_status != prev_status)
         
-        if status_changed:
-            if current_status == "200 OK":
-                # Recovered from SLOW or a DOWN state
-                if prev_status not in ["UNKNOWN", "200 OK"]:
-                    downtime_duration_str = None
-                    if prev_down_since:
-                        try:
-                            down_time = datetime.strptime(prev_down_since, "%Y-%m-%d %H:%M:%S")
-                            duration = current_time - down_time
-                            
-                            # Format duration into human readable string
-                            seconds = int(duration.total_seconds())
-                            hours, remainder = divmod(seconds, 3600)
-                            minutes, seconds = divmod(remainder, 60)
-                            
-                            parts = []
-                            if hours > 0:
-                                parts.append(f"{hours}h")
-                            if minutes > 0 or hours > 0:
-                                parts.append(f"{minutes}m")
-                            parts.append(f"{seconds}s")
-                            downtime_duration_str = " ".join(parts)
-                        except Exception as ex:
-                            print(f"[Monitor] Error parsing down_since timestamp '{prev_down_since}': {ex}")
-                    
-                    print(f"[Monitor] {url} is BACK ONLINE/NORMAL! Sending recovery alert...")
-                    success, msg_id = send_recovery_alert(
-                        website_url=url, 
-                        downtime_duration_str=downtime_duration_str,
-                        to_email="sayusahas@gmail.com",
-                        in_reply_to=last_alert_msg_id,
-                        references=last_alert_msg_id,
-                        subject_to_reply=last_alert_subject
-                    )
-                    notification_sent = success
-                else:
-                    print(f"[Monitor] {url} is UP (200 OK)")
+        if is_up and speed_rating == "Normal":
+            # Site is normal (200 OK)
+            if prev_status not in ["UNKNOWN", "200 OK"] or already_alerted:
+                downtime_duration_str = None
+                if prev_down_since:
+                    try:
+                        down_time = datetime.strptime(prev_down_since, "%Y-%m-%d %H:%M:%S")
+                        duration = current_time - down_time
+                        
+                        seconds = int(duration.total_seconds())
+                        hours, remainder = divmod(seconds, 3600)
+                        minutes, seconds = divmod(remainder, 60)
+                        
+                        parts = []
+                        if hours > 0:
+                            parts.append(f"{hours}h")
+                        if minutes > 0 or hours > 0:
+                            parts.append(f"{minutes}m")
+                        parts.append(f"{seconds}s")
+                        downtime_duration_str = " ".join(parts)
+                    except Exception as ex:
+                        print(f"[Monitor] Error parsing down_since timestamp '{prev_down_since}': {ex}")
                 
-                # Clear alert context on recovery
-                last_alert_msg_id = None
-                last_alert_subject = None
-                down_since_str = None
-                
-            elif current_status == "SLOW":
-                print(f"[Monitor] {url} is SLOW! Sending MEDIUM alert notification...")
-                success, msg_id = send_slow_alert(url, latency_ms, to_email="sayusahas@gmail.com")
+                print(f"[Monitor] {url} is BACK ONLINE/NORMAL! Sending recovery alert...")
+                success, msg_id = send_recovery_alert(
+                    website_url=url, 
+                    downtime_duration_str=downtime_duration_str,
+                    in_reply_to=last_alert_msg_id,
+                    references=last_alert_msg_id,
+                    subject_to_reply=last_alert_subject
+                )
                 notification_sent = success
-                if success:
-                    last_alert_msg_id = msg_id
-                    last_alert_subject = f"[MEDIUM ALERT] ⚠️ Website Slow - {url}"
-                down_since_str = prev_down_since or current_time.strftime("%Y-%m-%d %H:%M:%S")
-                
             else:
-                # Downtime (e.g. 404, 500, Timeout, Connection Error)
-                print(f"[Monitor] {url} went DOWN/Changed state! Sending HIGH alert notification... (Reason: {status_desc})")
-                success, msg_id = send_downtime_alert(url, status_code if status_code != 0 else status_desc, error_msg, to_email="sayusahas@gmail.com")
-                notification_sent = success
-                if success:
-                    last_alert_msg_id = msg_id
-                    last_alert_subject = f"[HIGH ALERT] 🚨 Website Down - {url}"
-                down_since_str = prev_down_since or current_time.strftime("%Y-%m-%d %H:%M:%S")
-                
-                # Trigger phone call on ANY status change to a non-200 state
-                # (e.g. 200→404, 404→500, SLOW→500, UNKNOWN→404 all trigger a call)
-                print(f"[Monitor] {url} changed to a non-200 state ({current_status}). Triggering voice call...")
-                make_voice_call(url, current_status)
-        else:
-            print(f"[Monitor] {url} remains {current_status}. No alert email sent.")
-            down_since_str = prev_down_since
+                print(f"[Monitor] {url} is UP (200 OK)")
             
+            # Reset alert state and failure count
+            consecutive_failures = 0
+            already_alerted = False
+            last_alert_msg_id = None
+            last_alert_subject = None
+            down_since_str = None
+
+        else:
+            # Non-200 or SLOW state
+            consecutive_failures += 1
+            down_since_str = prev_down_since or current_time.strftime("%Y-%m-%d %H:%M:%S")
+
+            if consecutive_failures < failure_threshold:
+                print(f"[Monitor] {url} check failed ({current_status}). Failure count: {consecutive_failures}/{failure_threshold}. Waiting for threshold before alerting.")
+            else:
+                # Failure threshold reached — alert ONLY on status transition
+                if not already_alerted or (current_status != prev_status):
+                    if current_status == "SLOW":
+                        print(f"[Monitor] {url} is SLOW ({latency_ms:.1f}ms)! Sending SLOW alert notification...")
+                        success, msg_id = send_slow_alert(url, latency_ms)
+                        notification_sent = success
+                        if success:
+                            last_alert_msg_id = msg_id
+                            last_alert_subject = f"[MEDIUM ALERT] ⚠️ Website Slow - {url}"
+                            already_alerted = True
+                    elif current_status == "Timeout":
+                        print(f"[Monitor] {url} is UNRESPONSIVE (Timeout) after {consecutive_failures} failed checks! Sending HIGH Timeout alert notification...")
+                        success, msg_id = send_timeout_alert(url, timeout, error_msg)
+                        notification_sent = success
+                        if success:
+                            last_alert_msg_id = msg_id
+                            last_alert_subject = f"[HIGH ALERT] ⏱️ Website Unresponsive (Timeout) - {url}"
+                            already_alerted = True
+                        
+                        print(f"[Monitor] Triggering voice call for Timeout outage on {url}...")
+                        make_voice_call(url, "Connection Timeout")
+                    else:
+                        # HTTP Error (e.g. 500, 404, etc.)
+                        print(f"[Monitor] {url} is DOWN ({current_status}) after {consecutive_failures} failed checks! Sending HIGH HTTP Error alert notification...")
+                        success, msg_id = send_downtime_alert(url, status_code if status_code != 0 else status_desc, error_msg)
+                        notification_sent = success
+                        if success:
+                            last_alert_msg_id = msg_id
+                            last_alert_subject = f"[HIGH ALERT] 🚨 Website Down (HTTP Error) - {url}"
+                            already_alerted = True
+                        
+                        print(f"[Monitor] Triggering voice call for HTTP status change on {url} ({current_status})...")
+                        make_voice_call(url, current_status)
+                else:
+                    print(f"[Monitor] {url} remains {current_status} ({consecutive_failures} consecutive failures). Alert already sent on transition.")
+
         # Save state
         state[url] = {
             "status": current_status,
             "last_check": current_time.strftime("%Y-%m-%d %H:%M:%S"),
             "down_since": down_since_str,
             "last_alert_msg_id": last_alert_msg_id,
-            "last_alert_subject": last_alert_subject
+            "last_alert_subject": last_alert_subject,
+            "consecutive_failures": consecutive_failures,
+            "alerted": already_alerted
         }
             
         # Log to Sheets/CSV
@@ -245,8 +275,8 @@ def main():
     parser.add_argument("--once", action="store_true", help="Run once and exit (useful for scheduling tools like Windows Task Scheduler)")
     args = parser.parse_args()
     
-    # Initialize Google Sheets / CSV fallback logger
-    logger = SheetLogger()
+    # Initialize SQLite logger
+    logger = SQLiteLogger()
     
     if args.once:
         run_checks(logger)

@@ -78,21 +78,42 @@ def send_email(subject, body, to_email=None, in_reply_to=None, references=None):
 
 def send_downtime_alert(website_url, status_code, error_message, to_email=None):
     """
-    Formulate and send a HIGH alert downtime email.
+    Formulate and send a HIGH alert downtime email for HTTP status code failures.
     Returns (success_bool, message_id)
     """
-    subject = f"[HIGH ALERT] 🚨 Website Down - {website_url}"
+    subject = f"[HIGH ALERT] 🚨 Website Down (HTTP Error) - {website_url}"
     body = (
         f"Hello,\n\n"
         f"This is an automated HIGH SEVERITY alert notification.\n"
-        f"The website monitored has failed its availability check.\n\n"
+        f"The website monitored has returned an HTTP error status code.\n\n"
         f"Details:\n"
         f"-----------------------------------------\n"
         f"URL:          {website_url}\n"
         f"Status Code:  {status_code}\n"
         f"Error/Reason: {error_message}\n"
         f"-----------------------------------------\n\n"
-        f"Please check the server status as soon as possible.\n"
+        f"Please check the server logs and application status as soon as possible.\n"
+    )
+    return send_email(subject, body, to_email=to_email)
+
+def send_timeout_alert(website_url, timeout_seconds, error_message=None, to_email=None):
+    """
+    Formulate and send a HIGH alert timeout email for unresponsive servers.
+    Returns (success_bool, message_id)
+    """
+    subject = f"[HIGH ALERT] ⏱️ Website Unresponsive (Timeout) - {website_url}"
+    reason = error_message or f"Request timed out after {timeout_seconds} seconds"
+    body = (
+        f"Hello,\n\n"
+        f"This is an automated HIGH SEVERITY alert notification.\n"
+        f"The website monitored failed to respond over the network within the allowed timeout limit.\n\n"
+        f"Details:\n"
+        f"-----------------------------------------\n"
+        f"URL:          {website_url}\n"
+        f"Issue:        Connection Timeout ({timeout_seconds}s limit)\n"
+        f"Error/Reason: {reason}\n"
+        f"-----------------------------------------\n\n"
+        f"Please verify network routing, firewall settings, and server machine availability.\n"
     )
     return send_email(subject, body, to_email=to_email)
 
@@ -118,19 +139,24 @@ def send_slow_alert(website_url, latency_ms, to_email=None):
 
 def send_recovery_alert(website_url, downtime_duration_str=None, to_email=None, in_reply_to=None, references=None, subject_to_reply=None):
     """
-    Formulate and send a recovery alert email.
+    Sends a recovery reply in the exact same email thread as the original outage alert.
+    Never sends a standalone email if there is no previous alert to reply to.
     Returns (success_bool, message_id)
     """
-    subject = subject_to_reply or f"✅ RECOVERED: Website Up - {website_url}"
+    if not in_reply_to or not subject_to_reply:
+        print(f"[Notifier] No previous alert message thread for {website_url}. Skipping recovery email.")
+        return False, None
+
+    subject = subject_to_reply
     duration_info = f" (Downtime duration: {downtime_duration_str})" if downtime_duration_str else ""
     body = (
         f"Hello,\n\n"
-        f"Good news! The website has recovered and is now answering successfully.\n\n"
+        f"Update: The website has recovered and status is now back to 200 OK.\n\n"
         f"Details:\n"
         f"-----------------------------------------\n"
         f"URL:          {website_url}\n"
         f"Status Code:  200 OK\n"
-        f"State:        ONLINE\n"
+        f"State:        ONLINE / RECOVERED\n"
         f"Duration:     {duration_info if duration_info else 'N/A'}\n"
         f"-----------------------------------------\n\n"
         f"Monitoring has resumed standard heartbeat checks.\n"

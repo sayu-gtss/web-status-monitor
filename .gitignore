@@ -9,10 +9,13 @@ credentials.json.json
 # Generated / State Files
 # ======================
 storage/monitor_state.json
+storage/monitor_logs.db
+storage/monitor.log
 storage/monitor_log.csv
 storage/monitor_log_*.csv
 storage/latency_history.json
 storage/*.pid
+temp_daemon_test.py
 
 # ======================
 # Python
