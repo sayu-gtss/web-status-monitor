@@ -270,9 +270,9 @@ class MockServerRequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
 def run_server(port=8080):
-    server_address = ('127.0.0.1', port)
+    server_address = ('0.0.0.0', port)
     httpd = HTTPServer(server_address, MockServerRequestHandler)
-    print(f"[Test Server] Running new Subdomain Mock Server on http://127.0.0.1:{port}...")
+    print(f"[Test Server] Running new Subdomain Mock Server on http://0.0.0.0:{port}...")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
