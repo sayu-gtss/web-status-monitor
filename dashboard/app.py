@@ -179,6 +179,10 @@ def write_env(updates: dict) -> None:
     with open(ENV_FILE, "w", encoding="utf-8") as fh:
         fh.writelines(new_lines)
 
+    # Update os.environ in memory so subprocesses inherit updated configuration
+    for key, value in updates.items():
+        os.environ[key] = str(value)
+
 
 # ---------------------------------------------------------------------------
 # Routes — pages
@@ -361,6 +365,8 @@ def run_check():
     """
     def generate():
         try:
+            env_vars = dict(os.environ)
+            env_vars.update(read_env())
             process = subprocess.Popen(
                 [sys.executable, "-u", str(MONITOR_SCRIPT), "--once"],
                 stdout=subprocess.PIPE,
@@ -368,6 +374,7 @@ def run_check():
                 text=True,
                 bufsize=1,
                 cwd=str(PROJECT_ROOT),
+                env=env_vars,
             )
             for line in process.stdout:
                 yield f"data: {line.rstrip()}\n\n"
@@ -445,11 +452,14 @@ def start_daemon():
         LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
         log_fh = open(LOG_FILE, "a", encoding="utf-8")
 
+        env_vars = dict(os.environ)
+        env_vars.update(read_env())
         start_kwargs = {
             "cwd": str(PROJECT_ROOT),
             "stdout": log_fh,
             "stderr": subprocess.STDOUT,
             "text": True,
+            "env": env_vars,
         }
         if os.name == 'nt':
             creationflags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
