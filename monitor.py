@@ -97,6 +97,7 @@ def check_website(url, timeout):
 
 def run_checks(logger):
     """Runs a single round of checks for all configured websites."""
+    load_dotenv(override=True)
     websites_str = os.getenv("WEBSITES_TO_MONITOR", "")
     if not websites_str:
         print("[Monitor] No websites configured in WEBSITES_TO_MONITOR. Please check your .env file.")
