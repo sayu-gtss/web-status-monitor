@@ -110,6 +110,8 @@ def run_checks(logger):
     except ValueError:
         timeout = 5
         print(f"[Monitor] Invalid REQUEST_TIMEOUT_SECONDS: {timeout_val}. Defaulting to 5 seconds.")
+    if timeout > 10 or timeout <= 0:
+        timeout = 10
         
     slow_threshold_val = os.getenv("SLOW_THRESHOLD_SECONDS", "1.5")
     try:
