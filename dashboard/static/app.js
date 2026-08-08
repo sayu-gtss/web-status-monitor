@@ -1,5 +1,5 @@
 /* ==========================================================================
-   WebGuard Dashboard — Frontend Logic
+   Website Availability Monitor Dashboard — Frontend Logic
    ========================================================================== */
 
 'use strict';
