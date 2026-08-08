@@ -87,6 +87,33 @@ class SQLiteLogger:
         except Exception:
             return "unknown"
 
+    def cleanup_old_logs(self, retention_days=None):
+        """Deletes database check logs older than the specified retention days."""
+        if retention_days is None:
+            ret_val = os.getenv("RETENTION_DAYS", "30")
+            try:
+                retention_days = int(ret_val)
+            except ValueError:
+                retention_days = 30
+
+        if retention_days <= 0:
+            return 0  # 0 or negative means retain forever
+
+        try:
+            from datetime import timedelta
+            cutoff_date = (datetime.now() - timedelta(days=retention_days)).strftime("%Y-%m-%d %H:%M:%S")
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM check_logs WHERE timestamp < ?", (cutoff_date,))
+                deleted_count = cursor.rowcount
+                conn.commit()
+            if deleted_count > 0:
+                print(f"[SQLiteLogger] Cleaned up {deleted_count} logs older than {retention_days} days (before {cutoff_date}).")
+            return deleted_count
+        except Exception as e:
+            print(f"[SQLiteLogger] Log cleanup error: {e}")
+            return 0
+
     def log(self, website_url, status_code, status_desc, response_time_ms, speed_rating, notification_sent):
         """Logs a website heartbeat check result to the SQLite database."""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -105,6 +132,9 @@ class SQLiteLogger:
                 conn.commit()
             print(f"[SQLiteLogger] Logged check to DB [{domain}]: {website_url} (Status: {status_code})")
             
+            # Auto cleanup logs older than retention period
+            self.cleanup_old_logs()
+
             # Optional Google Sheets Fallback
             if os.getenv("GOOGLE_SHEET_ID"):
                 try:

@@ -7,9 +7,15 @@ from dotenv import load_dotenv
 # Load env variables in case notifier is imported or run standalone
 load_dotenv()
 
+def defang_url(url: str) -> str:
+    """Masks http:// to hxxp:// and https:// to hxxps:// to prevent email filter blocking."""
+    if not url:
+        return url
+    return url.replace("https://", "hxxps://").replace("http://", "hxxp://")
+
 def send_email(subject, body, to_email=None, in_reply_to=None, references=None):
     """
-    Sends an email using standard SMTP.
+    Sends an email using standard SMTP to single or multiple recipients.
     Supports standard TLS (port 587) and SSL (port 465).
     Returns (success_bool, message_id)
     """
@@ -17,10 +23,17 @@ def send_email(subject, body, to_email=None, in_reply_to=None, references=None):
     smtp_port = os.getenv("SMTP_PORT")
     smtp_username = os.getenv("SMTP_USERNAME")
     smtp_password = os.getenv("SMTP_PASSWORD")
-    receiver_email = to_email or os.getenv("NOTIFICATION_RECEIVER")
+    receiver_input = to_email or os.getenv("NOTIFICATION_RECEIVER", "")
     
-    if not all([smtp_server, smtp_port, smtp_username, smtp_password, receiver_email]):
-        print("[Notifier] Missing SMTP configuration in environment. Email not sent.")
+    if isinstance(receiver_input, list):
+        recipients = [e.strip() for e in receiver_input if e and e.strip()]
+    elif isinstance(receiver_input, str):
+        recipients = [e.strip() for e in receiver_input.replace(";", ",").split(",") if e.strip()]
+    else:
+        recipients = []
+    
+    if not all([smtp_server, smtp_port, smtp_username, smtp_password, recipients]):
+        print("[Notifier] Missing SMTP configuration or receiver email. Email not sent.")
         return False, None
         
     try:
@@ -29,10 +42,12 @@ def send_email(subject, body, to_email=None, in_reply_to=None, references=None):
         print(f"[Notifier] Invalid SMTP_PORT: {smtp_port}. Port must be an integer.")
         return False, None
 
+    receiver_header_str = ", ".join(recipients)
+
     # Create message container
     msg = MIMEMultipart()
     msg['From'] = smtp_username
-    msg['To'] = receiver_email
+    msg['To'] = receiver_header_str
     
     if in_reply_to:
         msg['In-Reply-To'] = in_reply_to
@@ -68,9 +83,9 @@ def send_email(subject, body, to_email=None, in_reply_to=None, references=None):
             server.ehlo()
             
         server.login(smtp_username, smtp_password)
-        server.sendmail(smtp_username, receiver_email, msg.as_string())
+        server.sendmail(smtp_username, recipients, msg.as_string())
         server.quit()
-        print(f"[Notifier] Alert email successfully sent to {receiver_email} with Message-ID: {msg_id}")
+        print(f"[Notifier] Alert email successfully sent to {receiver_header_str} with Message-ID: {msg_id}")
         return True, msg_id
     except Exception as e:
         print(f"[Notifier] Error sending email: {e}")
@@ -79,16 +94,18 @@ def send_email(subject, body, to_email=None, in_reply_to=None, references=None):
 def send_downtime_alert(website_url, status_code, error_message, to_email=None):
     """
     Formulate and send a HIGH alert downtime email for HTTP status code failures.
+    Masks URL (http -> hxxp) for email filter safety.
     Returns (success_bool, message_id)
     """
-    subject = f"[HIGH ALERT] 🚨 Website Down (HTTP Error) - {website_url}"
+    masked_url = defang_url(website_url)
+    subject = f"[HIGH ALERT] 🚨 Website Down (HTTP Error) - {masked_url}"
     body = (
         f"Hello,\n\n"
         f"This is an automated HIGH SEVERITY alert notification.\n"
         f"The website monitored has returned an HTTP error status code.\n\n"
         f"Details:\n"
         f"-----------------------------------------\n"
-        f"URL:          {website_url}\n"
+        f"URL:          {masked_url}\n"
         f"Status Code:  {status_code}\n"
         f"Error/Reason: {error_message}\n"
         f"-----------------------------------------\n\n"
@@ -99,9 +116,11 @@ def send_downtime_alert(website_url, status_code, error_message, to_email=None):
 def send_timeout_alert(website_url, timeout_seconds, error_message=None, to_email=None):
     """
     Formulate and send a HIGH alert timeout email for unresponsive servers.
+    Masks URL (http -> hxxp) for email filter safety.
     Returns (success_bool, message_id)
     """
-    subject = f"[HIGH ALERT] ⏱️ Website Unresponsive (Timeout) - {website_url}"
+    masked_url = defang_url(website_url)
+    subject = f"[HIGH ALERT] ⏱️ Website Unresponsive (Timeout) - {masked_url}"
     reason = error_message or f"Request timed out after {timeout_seconds} seconds"
     body = (
         f"Hello,\n\n"
@@ -109,7 +128,7 @@ def send_timeout_alert(website_url, timeout_seconds, error_message=None, to_emai
         f"The website monitored failed to respond over the network within the allowed timeout limit.\n\n"
         f"Details:\n"
         f"-----------------------------------------\n"
-        f"URL:          {website_url}\n"
+        f"URL:          {masked_url}\n"
         f"Issue:        Connection Timeout ({timeout_seconds}s limit)\n"
         f"Error/Reason: {reason}\n"
         f"-----------------------------------------\n\n"
@@ -120,16 +139,18 @@ def send_timeout_alert(website_url, timeout_seconds, error_message=None, to_emai
 def send_slow_alert(website_url, latency_ms, to_email=None):
     """
     Formulate and send a MEDIUM alert slow response email.
+    Masks URL (http -> hxxp) for email filter safety.
     Returns (success_bool, message_id)
     """
-    subject = f"[MEDIUM ALERT] ⚠️ Website Slow - {website_url}"
+    masked_url = defang_url(website_url)
+    subject = f"[MEDIUM ALERT] ⚠️ Website Slow - {masked_url}"
     body = (
         f"Hello,\n\n"
         f"This is an automated MEDIUM SEVERITY alert notification.\n"
         f"The website monitored is responding extremely slowly.\n\n"
         f"Details:\n"
         f"-----------------------------------------\n"
-        f"URL:          {website_url}\n"
+        f"URL:          {masked_url}\n"
         f"Latency:      {latency_ms:.1f} ms\n"
         f"State:        SLOW\n"
         f"-----------------------------------------\n\n"
@@ -147,6 +168,7 @@ def send_recovery_alert(website_url, downtime_duration_str=None, to_email=None, 
         print(f"[Notifier] No previous alert message thread for {website_url}. Skipping recovery email.")
         return False, None
 
+    masked_url = defang_url(website_url)
     subject = subject_to_reply
     duration_info = f" (Downtime duration: {downtime_duration_str})" if downtime_duration_str else ""
     body = (
@@ -154,7 +176,7 @@ def send_recovery_alert(website_url, downtime_duration_str=None, to_email=None, 
         f"Update: The website has recovered and status is now back to 200 OK.\n\n"
         f"Details:\n"
         f"-----------------------------------------\n"
-        f"URL:          {website_url}\n"
+        f"URL:          {masked_url}\n"
         f"Status Code:  200 OK\n"
         f"State:        ONLINE / RECOVERED\n"
         f"Duration:     {duration_info if duration_info else 'N/A'}\n"

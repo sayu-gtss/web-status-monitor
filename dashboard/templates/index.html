@@ -430,8 +430,9 @@
                   </div>
                 </div>
                 <div class="form-group form-group--full">
-                  <label class="form-label" for="cfg-NOTIFICATION_RECEIVER">Notification Receiver Email</label>
-                  <input type="email" id="cfg-NOTIFICATION_RECEIVER" class="form-input" placeholder="receiver@example.com" disabled />
+                  <label class="form-label" for="cfg-NOTIFICATION_RECEIVER">Notification Receiver Emails</label>
+                  <input type="text" id="cfg-NOTIFICATION_RECEIVER" class="form-input" placeholder="receiver1@example.com, receiver2@example.com" disabled />
+                  <span class="form-hint">Separate multiple receiver email addresses with commas (e.g., admin1@company.com, admin2@company.com).</span>
                 </div>
               </div>
               <div class="form-actions" id="actions-email" style="display:none;gap:10px;">
@@ -521,6 +522,12 @@
                   <label class="form-label" for="cfg-SQLITE_DB_PATH">Primary SQLite Database File Path</label>
                   <input type="text" id="cfg-SQLITE_DB_PATH" class="form-input" placeholder="storage/monitor_logs.db" disabled />
                   <span class="form-hint">Fast, local embedded database path. Default: <code>storage/monitor_logs.db</code></span>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label" for="cfg-RETENTION_DAYS">Log Retention Period (Days)</label>
+                  <input type="number" id="cfg-RETENTION_DAYS" class="form-input" placeholder="30" min="0" max="365" disabled />
+                  <span class="form-hint">Auto-delete database check records older than this retention period (Default: 30 days). Set 0 to retain forever.</span>
                 </div>
 
                 <div class="form-group form-group--full" style="border-top:1px solid var(--border);padding-top:16px;margin-top:8px;">

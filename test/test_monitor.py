@@ -81,7 +81,7 @@ class TestMonitor(unittest.TestCase):
         mock_send_email.assert_called_once()
         args, kwargs = mock_send_email.call_args
         self.assertIn("Website Down (HTTP Error)", args[0])
-        self.assertIn("https://example.com", args[0])
+        self.assertIn("hxxps://example.com", args[0])
         self.assertIn("500", args[1])
         self.assertIn("Internal Server Error", args[1])
 
@@ -95,7 +95,7 @@ class TestMonitor(unittest.TestCase):
         mock_send_email.assert_called_once()
         args, kwargs = mock_send_email.call_args
         self.assertIn("Website Unresponsive (Timeout)", args[0])
-        self.assertIn("https://example.com", args[0])
+        self.assertIn("hxxps://example.com", args[0])
         self.assertIn("Connection Timeout", args[1])
 
     @patch('src.notifier.send_email')
@@ -113,7 +113,7 @@ class TestMonitor(unittest.TestCase):
         mock_send_email.assert_called_once()
         args, kwargs = mock_send_email.call_args
         self.assertIn("[HIGH ALERT] 🚨 Website Down", args[0])
-        self.assertIn("https://example.com", args[1])
+        self.assertIn("hxxps://example.com", args[1])
         self.assertIn("1m 30s", args[1])
 
     @patch('monitor.load_dotenv')
