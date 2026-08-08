@@ -8,7 +8,7 @@ import requests
 from dotenv import load_dotenv
 import schedule
 
-from src.notifier import send_downtime_alert, send_timeout_alert, send_recovery_alert, send_slow_alert
+from src.notifier import send_downtime_alert, send_timeout_alert, send_recovery_alert, send_slow_alert, defang_url
 from src.caller import make_voice_call
 from storage.sqlite_logger import SQLiteLogger
 
@@ -225,7 +225,7 @@ def run_checks(logger):
                         notification_sent = success
                         if success:
                             last_alert_msg_id = msg_id
-                            last_alert_subject = f"[MEDIUM ALERT] ⚠️ Website Slow - {url}"
+                            last_alert_subject = f"[MEDIUM ALERT] ⚠️ Website Slow - {defang_url(url)}"
                             already_alerted = True
                     elif current_status == "Timeout":
                         print(f"[Monitor] {url} is UNRESPONSIVE (Timeout) after {consecutive_failures} failed checks! Sending HIGH Timeout alert notification...")
@@ -233,7 +233,7 @@ def run_checks(logger):
                         notification_sent = success
                         if success:
                             last_alert_msg_id = msg_id
-                            last_alert_subject = f"[HIGH ALERT] ⏱️ Website Unresponsive (Timeout) - {url}"
+                            last_alert_subject = f"[HIGH ALERT] ⏱️ Website Unresponsive (Timeout) - {defang_url(url)}"
                             already_alerted = True
                         
                         print(f"[Monitor] Triggering voice call for Timeout outage on {url}...")
@@ -245,7 +245,7 @@ def run_checks(logger):
                         notification_sent = success
                         if success:
                             last_alert_msg_id = msg_id
-                            last_alert_subject = f"[HIGH ALERT] 🚨 Website Down (HTTP Error) - {url}"
+                            last_alert_subject = f"[HIGH ALERT] 🚨 Website Down (HTTP Error) - {defang_url(url)}"
                             already_alerted = True
                         
                         print(f"[Monitor] Triggering voice call for HTTP status change on {url} ({current_status})...")
