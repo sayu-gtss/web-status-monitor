@@ -116,15 +116,16 @@ class TestMonitor(unittest.TestCase):
         self.assertIn("https://example.com", args[1])
         self.assertIn("1m 30s", args[1])
 
-    @patch('monitor.make_voice_call')
+    @patch('monitor.load_dotenv')
+    @patch('src.caller.make_voice_call')
     @patch('monitor.load_state')
     @patch('monitor.save_state')
     @patch('monitor.check_website')
-    @patch('monitor.send_downtime_alert')
-    @patch('monitor.send_recovery_alert')
+    @patch('src.notifier.send_downtime_alert')
+    @patch('src.notifier.send_recovery_alert')
     @patch('storage.sqlite_logger.SQLiteLogger.log')
     @patch.dict(os.environ, {"WEBSITES_TO_MONITOR": "https://test.com", "CONSECUTIVE_FAILURES_THRESHOLD": "1"})
-    def test_run_checks_transitions(self, mock_log, mock_send_recovery, mock_send_downtime, mock_check, mock_save, mock_load, mock_call):
+    def test_run_checks_transitions(self, mock_log, mock_send_recovery, mock_send_downtime, mock_check, mock_save, mock_load, mock_call, mock_load_dotenv):
         logger_mock = MagicMock(spec=SQLiteLogger)
         
         # 1. Test transition: UNKNOWN -> DOWN (alerts)
